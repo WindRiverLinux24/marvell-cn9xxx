@@ -1,0 +1,131 @@
+		Marvell CN9XXX BSP
+
+
+1. About this document
+======================
+This document describes the common and non-hardware specific information.
+Please refer to README.hardware for hardware specific information.
+
+Dependencies
+------------
+This layer depends on the oe-core version supplied with linux-yocto kernel.
+
+Maintenance
+-----------
+This layer is maintained by Wind River Systems, Inc.
+Contact <support@windriver.com> or your support representative for more
+information on submitting changes.
+
+Building the marvell-cn9xxx layer
+---------------------------------
+This layer should be added to bblayers.conf. This is done automatically
+when using the Wind River setup.sh wrapper.
+
+License
+-------
+Copyright (C) 2019 Wind River Systems, Inc.
+
+The right to copy, distribute or otherwise make use of this software may
+be licensed only pursuant to the terms of an applicable Wind River license
+agreement. No license to Wind River intellectual properly rights is granted
+herein. All rights not licensed by Wind River are reserved by Wind River.
+
+Source code included in tree for individual recipes is under the LICENSE
+stated in each recipe (.bb file) unless other stated.
+
+
+2. BSP Kernel and Distros
+=========================
+
+The following table summarizes the valid Wind River Linux distros for this BSP.
+'Y' in each content cell stands for supported; 'N' stands for not supported:
+
+  +--------------+-------------+-------------+-------------+
+  | valid/distro |   wrlinux   | wrlinux-cgl | wrlinux-ovp |
+  +--------------+-------------+-------------+-------------+
+  |    valid     |      Y      |      Y      |      N      |
+  +--------------+-------------+-------------+-------------+
+
+For the supported kernel type for this BSP, please check the TARGET_SUPPORTED_KTYPES
+by running 'bitbake -e virtual/kernel | grep "^TARGET_SUPPORTED_KTYPES="'.
+
+Note: The preempt-rt ktype is not available for this BSP/Machine at this time.
+
+
+3. Board Specific Patches
+=========================
+
+To get a list of patches applied to the kernel specific to this BSP
+along with patch descriptions use git whatchanged on the default
+kernel (git whatchanged <kernel_type>..<bsp_name>). For example:
+
+  # cd tmp-glibc/work-shared/<bsp_name>/kernel-source
+  # git whatchanged standard/base..standard/<machine name>
+
+
+4. Boot Instructions
+====================
+
+The typical u-boot settings apply to these boards. You will need to use
+setenv, printenv and saveenv, to configure, display and store respectively
+your network configuration details and kernel command line. In order to
+TFTP a kernel, you need at a minimum to set the following:
+
+	- ipaddr
+	- gatewayip
+	- netmask
+	- serverip
+	- loadaddr
+	- dtbfile
+	- dtbaddr
+	- ethaddr
+	- eth1addr
+
+Your board may ship with the values for the MAC address of
+the Ethernet interfaces set to the defaults compiled into the
+u-boot image.  You should set the ethaddr, eth1addr and so on
+as per the manufacturer assigned values, usually indicated with
+a sticker on the board.
+
+Target specifics are usually set in the "bootargs" variable, and the
+kernel image is set in the "bootfile" variable. Don't forget that if you
+want these values to be available after a power cycle you will need to run
+the saveenv command.
+
+Typically convenience macros exist that will create a complete bootargs
+command line for the kernel based on variables that contain individual
+settings.  Since these macros exist as env variables themselves, they
+may or may not be present depending on who installed and configured
+u-boot for the board.
+
+The console device for the board is ttyS0 at 115200 baud. For the DTB
+address, 0x6f00000 was used with success by Wind River. The load address
+must be high enough to not interfere with kernel decompression. A value
+of 0x7000000 was used with success for all kernels tested by Wind River.
+
+4.1 NFS Root File System
+------------------------
+
+Example settings for the monitor (u-boot) are shown below:
+
+nfsboot=setenv bootargs root=/dev/nfs rw nfsroot=$serverip:$rootpath \
+ip=$ipaddr:$serverip:$gatewayip:$netmask:$hostname:$netdev:off \
+console=$consoledev,$baudrate $othbootargs;tftp $loadaddr $bootfile; \
+tftp $fdtaddr $fdtfile;booti $loadaddr - $fdtaddr
+ethaddr=00:04:9F:02:00:FD
+eth1addr=00:04:9F:02:01:FD
+eth2addr=00:04:9F:02:02:FD
+loadaddr=0x6000000
+fdtaddr=0x6f00000
+gatewayip=192.168.1.1
+netmask=255.255.255.0
+ipaddr=192.168.1.100
+serverip=192.168.1.2
+netdev=eth1
+ethact=eth1
+ethprime=asix_eth
+bootfile=Image
+fdtfile=cn9130-db-A.dtb
+rootpath=/tftpboot/rootfs
+consoledev=ttyS0
+baudrate=115200
