@@ -1,3 +1,2 @@
-require linux-yocto-marvell-cn91xx.inc
-
-KBRANCH_marvell-cn91xx  = "v4.18/standard/${KMACHINE}"
+require ${@bb.utils.contains('MACHINE', 'marvell-cn91xx', 'linux-yocto-marvell-cn91xx.inc', '', d)}
+require ${@bb.utils.contains('MACHINE', 'marvell-cn96xx', 'linux-yocto-marvell-cn96xx.inc', '', d)}

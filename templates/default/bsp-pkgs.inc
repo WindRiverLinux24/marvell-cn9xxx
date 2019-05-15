@@ -1,1 +1,1 @@
-IMAGE_INSTALL += "linux-firmware-marvell-is-fw"
+IMAGE_INSTALL_append_marvell-cn91xx = " linux-firmware-marvell-is-fw"
