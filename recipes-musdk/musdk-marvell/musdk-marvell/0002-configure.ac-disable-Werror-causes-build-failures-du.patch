@@ -1,0 +1,31 @@
+From 705cc3f7773256ebf022a7860029969c92f16a02 Mon Sep 17 00:00:00 2001
+From: Thomas Petazzoni <thomas.petazzoni@bootlin.com>
+Date: Fri, 4 Jan 2019 13:24:48 +0100
+Subject: [PATCH] configure.ac: disable -Werror, causes build failures due to
+ warnings
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+crypto_echo.c:1781:59: error: ‘%d’ directive output may be truncated writing between 1 and 10 bytes into a region of size between 6 and 9 [-Werror=format-truncation=]
+
+Signed-off-by: Thomas Petazzoni <thomas.petazzoni@bootlin.com>
+---
+ configure.ac | 1 -
+ 1 file changed, 1 deletion(-)
+
+diff --git a/configure.ac b/configure.ac
+index 02218de..25d40d6 100644
+--- a/configure.ac
++++ b/configure.ac
+@@ -254,7 +254,6 @@ AC_CHECK_HEADERS([stdlib.h unistd.h])
+ m4_ifdef([AM_PROG_AR], [AM_PROG_AR])
+ 
+ CFLAGS="$CFLAGS -Wall "
+-CFLAGS+="-Werror "
+ CFLAGS+="-Wstrict-prototypes "
+ CFLAGS+="-Wmissing-prototypes "
+ CFLAGS+="-pthread "
+-- 
+2.20.1
+
