@@ -1,0 +1,71 @@
+From 016b0b890daee854f9f18190c6985769c4cdfd67 Mon Sep 17 00:00:00 2001
+From: yuric <yuric@marvell.com>
+Date: Wed, 19 Dec 2018 11:40:09 +0200
+Subject: [PATCH 15/30] net/lport: add lport PMD
+
+Change-Id: Ib517eafd474ed249651ffe917f736df535a782f1
+Signed-off-by: yuric <yuric@marvell.com>
+Reviewed-on: http://vgitil04.il.marvell.com:8080/61964
+Reviewed-by: Liron Himi <lironh@marvell.com>
+Tested-by: Liron Himi <lironh@marvell.com>
+Reviewed-on: https://sj1git1.cavium.com/1193
+Tested-by: Liron Himi
+Reviewed-by: Liron Himi
+---
+ config/defconfig_arm64-armada-linuxapp-gcc | 1 +
+ doc/guides/nics/index.rst                  | 1 +
+ drivers/net/Makefile                       | 1 +
+ mk/rte.app.mk                              | 1 +
+ 4 files changed, 4 insertions(+)
+
+diff --git a/config/defconfig_arm64-armada-linuxapp-gcc b/config/defconfig_arm64-armada-linuxapp-gcc
+index 761fbe1..10b9648 100644
+--- a/config/defconfig_arm64-armada-linuxapp-gcc
++++ b/config/defconfig_arm64-armada-linuxapp-gcc
+@@ -9,6 +9,7 @@ CONFIG_RTE_LIBRTE_MVEP_COMMON=y
+ CONFIG_RTE_LIBRTE_MVPP2_PMD=y
+ CONFIG_RTE_LIBRTE_MVNETA_PMD=y
+ CONFIG_RTE_LIBRTE_PMD_MVSAM_CRYPTO=y
++CONFIG_RTE_LIBRTE_PMD_LPORT=n
+ 
+ #
+ # Compile Environment Abstraction Layer
+diff --git a/doc/guides/nics/index.rst b/doc/guides/nics/index.rst
+index 1e46705..57f1118 100644
+--- a/doc/guides/nics/index.rst
++++ b/doc/guides/nics/index.rst
+@@ -32,6 +32,7 @@ Network Interface Controller Drivers
+     intel_vf
+     kni
+     liquidio
++    lport
+     mlx4
+     mlx5
+     mvneta
+diff --git a/drivers/net/Makefile b/drivers/net/Makefile
+index c0386fe..6b1f860 100644
+--- a/drivers/net/Makefile
++++ b/drivers/net/Makefile
+@@ -16,6 +16,7 @@ DIRS-$(CONFIG_RTE_LIBRTE_AVP_PMD) += avp
+ DIRS-$(CONFIG_RTE_LIBRTE_AXGBE_PMD) += axgbe
+ DIRS-$(CONFIG_RTE_LIBRTE_BNX2X_PMD) += bnx2x
+ DIRS-$(CONFIG_RTE_LIBRTE_PMD_BOND) += bonding
++DIRS-$(CONFIG_RTE_LIBRTE_PMD_LPORT) += lport
+ DIRS-$(CONFIG_RTE_LIBRTE_CXGBE_PMD) += cxgbe
+ ifeq ($(CONFIG_RTE_LIBRTE_DPAA_BUS),y)
+ DIRS-$(CONFIG_RTE_LIBRTE_DPAA_PMD) += dpaa
+diff --git a/mk/rte.app.mk b/mk/rte.app.mk
+index 5699d97..98bf5cc 100644
+--- a/mk/rte.app.mk
++++ b/mk/rte.app.mk
+@@ -149,6 +149,7 @@ _LDLIBS-$(CONFIG_RTE_LIBRTE_AXGBE_PMD)      += -lrte_pmd_axgbe
+ _LDLIBS-$(CONFIG_RTE_LIBRTE_BNX2X_PMD)      += -lrte_pmd_bnx2x -lz
+ _LDLIBS-$(CONFIG_RTE_LIBRTE_BNXT_PMD)       += -lrte_pmd_bnxt
+ _LDLIBS-$(CONFIG_RTE_LIBRTE_PMD_BOND)       += -lrte_pmd_bond
++_LDLIBS-$(CONFIG_RTE_LIBRTE_PMD_LPORT)      += -lrte_pmd_lport
+ _LDLIBS-$(CONFIG_RTE_LIBRTE_CXGBE_PMD)      += -lrte_pmd_cxgbe
+ ifeq ($(CONFIG_RTE_LIBRTE_DPAA_BUS),y)
+ _LDLIBS-$(CONFIG_RTE_LIBRTE_DPAA_PMD)       += -lrte_pmd_dpaa
+-- 
+2.7.4
+

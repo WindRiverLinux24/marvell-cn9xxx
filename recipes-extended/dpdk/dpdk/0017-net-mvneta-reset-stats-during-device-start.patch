@@ -1,0 +1,43 @@
+From c1917df56ac6164cf36ff61186be1bea6395f6e9 Mon Sep 17 00:00:00 2001
+From: yuric <yuric@marvell.com>
+Date: Wed, 26 Dec 2018 14:21:35 +0200
+Subject: [PATCH 17/30] net/mvneta: reset stats during device start
+
+Change-Id: I5e46a1c930759d059816fa851697df95f7333b51
+Signed-off-by: yuric <yuric@marvell.com>
+Reviewed-on: http://vgitil04.il.marvell.com:8080/62116
+Reviewed-by: Alan Winkowski <walan@marvell.com>
+Tested-by: iSoC Platform CI <ykjenk@marvell.com>
+Reviewed-by: Liron Himi <lironh@marvell.com>
+Reviewed-on: https://sj1git1.cavium.com/1940
+Tested-by: Liron Himi
+Reviewed-by: Liron Himi
+---
+ drivers/net/mvneta/mvneta_ethdev.c | 4 ++++
+ 1 file changed, 4 insertions(+)
+
+diff --git a/drivers/net/mvneta/mvneta_ethdev.c b/drivers/net/mvneta/mvneta_ethdev.c
+index 9198568..695d852 100644
+--- a/drivers/net/mvneta/mvneta_ethdev.c
++++ b/drivers/net/mvneta/mvneta_ethdev.c
+@@ -56,6 +56,8 @@ struct mvneta_ifnames {
+ 
+ static int mvneta_dev_num;
+ 
++static void mvneta_stats_reset(struct rte_eth_dev *dev);
++
+ /**
+  * Deinitialize packet processor.
+  */
+@@ -358,6 +360,8 @@ mvneta_dev_start(struct rte_eth_dev *dev)
+ 	}
+ 	priv->ppio_id = priv->ppio->port_id;
+ 
++	mvneta_stats_reset(dev);
++
+ 	/*
+ 	 * In case there are some some stale uc/mc mac addresses flush them
+ 	 * here. It cannot be done during mvneta_dev_close() as port information
+-- 
+2.7.4
+

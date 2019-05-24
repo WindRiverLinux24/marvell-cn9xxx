@@ -129,3 +129,30 @@ fdtfile=cn9130-db-A.dtb
 rootpath=/tftpboot/rootfs
 consoledev=ttyS0
 baudrate=115200
+
+5. DPDK
+=======
+
+5.1 Build Configuration
+-----------------------
+Please refer to the "Build Configuration" section in the feature/dpdk/README
+for more details about how to enable it.
+
+5.2 Running the DPDK Examples
+-----------------------------
+The following uses the testpmd as an example to demonstrate how to run the DPDK
+examples:
+  1. Setup hugepages:
+     # echo 1024 > /sys/kernel/mm/hugepages/hugepages-2048kB/nr_hugepages
+
+  2. Bring the interfaces up:
+     # ip link set dev eth0 up
+     # ip link set dev eth2 up
+
+  3. Insert kernel modules:
+     # rmmod uio_pdrv_genirq
+     # modprobe musdk_cma
+     # modprobe uio_pdrv_genirq of_id="generic-uio"
+
+  4. Run the Application:
+     # testpmd --vdev=net_mvpp2,iface=eth0,iface=eth2

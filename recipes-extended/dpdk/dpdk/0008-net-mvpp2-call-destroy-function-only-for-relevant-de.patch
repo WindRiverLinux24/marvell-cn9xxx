@@ -1,0 +1,38 @@
+From 57bc88415665850f6ef5fdfbb0aca1b9f8574773 Mon Sep 17 00:00:00 2001
+From: yuric <yuric@marvell.com>
+Date: Thu, 13 Dec 2018 16:02:14 +0200
+Subject: [PATCH 08/30] net/mvpp2: call destroy function only for relevant
+ device
+
+Change-Id: Id1107dd98d73ddd6d1404096fc41181f651b4661
+Signed-off-by: yuric <yuric@marvell.com>
+Reviewed-on: http://vgitil04.il.marvell.com:8080/61758
+Reviewed-by: Liron Himi <lironh@marvell.com>
+Tested-by: Liron Himi <lironh@marvell.com>
+Reviewed-on: https://sj1git1.cavium.com/1186
+Reviewed-by: Alan Winkowski
+Reviewed-by: Liron Himi
+Tested-by: Liron Himi
+---
+ drivers/net/mvpp2/mrvl_ethdev.c | 5 ++++-
+ 1 file changed, 4 insertions(+), 1 deletion(-)
+
+diff --git a/drivers/net/mvpp2/mrvl_ethdev.c b/drivers/net/mvpp2/mrvl_ethdev.c
+index fc73f49..69ac5f6 100644
+--- a/drivers/net/mvpp2/mrvl_ethdev.c
++++ b/drivers/net/mvpp2/mrvl_ethdev.c
+@@ -3090,7 +3090,10 @@ rte_pmd_mrvl_remove(struct rte_vdev_device *vdev)
+ 
+ 	MRVL_LOG(INFO, "Removing %s", name);
+ 
+-	RTE_ETH_FOREACH_DEV(i) { /* FIXME: removing all devices! */
++	RTE_ETH_FOREACH_DEV(i) {
++		if (rte_eth_devices[i].device != &vdev->device)
++			continue;
++
+ 		char ifname[RTE_ETH_NAME_MAX_LEN];
+ 
+ 		rte_eth_dev_get_name_by_port(i, ifname);
+-- 
+2.7.4
+

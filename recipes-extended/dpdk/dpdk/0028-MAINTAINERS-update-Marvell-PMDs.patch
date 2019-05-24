@@ -1,0 +1,51 @@
+From 1bd494d6d84829ae201754d0a363bd3b53a66170 Mon Sep 17 00:00:00 2001
+From: Liron Himi <lironh@marvell.com>
+Date: Thu, 27 Dec 2018 01:04:03 +0200
+Subject: [PATCH 28/30] MAINTAINERS: update Marvell PMDs
+
+Change-Id: I774dfcc6087cea15173a2ca7fb42ef21baf47b0e
+Signed-off-by: Liron Himi <lironh@marvell.com>
+Reviewed-on: https://sj1git1.cavium.com/1232
+Reviewed-by: Jerin Jacob Kollanukkaran <Jerin.Jacob@cavium.com>
+Tested-by: Jerin Jacob Kollanukkaran <Jerin.Jacob@cavium.com>
+---
+ MAINTAINERS | 9 +++------
+ 1 file changed, 3 insertions(+), 6 deletions(-)
+
+diff --git a/MAINTAINERS b/MAINTAINERS
+index 71ba312..7543d56 100644
+--- a/MAINTAINERS
++++ b/MAINTAINERS
+@@ -595,8 +595,7 @@ F: doc/guides/nics/features/ifc*.ini
+ 
+ Marvell mvpp2
+ M: Tomasz Duszynski <tdu@semihalf.com>
+-M: Dmitri Epshtein <dima@marvell.com>
+-M: Natalie Samsonov <nsamsono@marvell.com>
++M: Liron Himi <lironh@marvell.com>
+ F: drivers/common/mvep/
+ F: drivers/net/mvpp2/
+ F: doc/guides/nics/mvpp2.rst
+@@ -604,8 +603,7 @@ F: doc/guides/nics/features/mvpp2.ini
+ 
+ Marvell mvneta
+ M: Zyta Szpak <zr@semihalf.com>
+-M: Dmitri Epshtein <dima@marvell.com>
+-M: Natalie Samsonov <nsamsono@marvell.com>
++M: Liron Himi <lironh@marvell.com>
+ F: drivers/net/mvneta/
+ F: doc/guides/nics/mvneta.rst
+ F: doc/guides/nics/features/mvneta.ini
+@@ -846,8 +844,7 @@ F: doc/guides/cryptodevs/features/kasumi.ini
+ 
+ Marvell Mrvl
+ M: Tomasz Duszynski <tdu@semihalf.com>
+-M: Dmitri Epshtein <dima@marvell.com>
+-M: Natalie Samsonov <nsamsono@marvell.com>
++M: Liron Himi <lironh@marvell.com>
+ F: drivers/crypto/mvsam/
+ F: doc/guides/cryptodevs/mvsam.rst
+ F: doc/guides/cryptodevs/features/mvsam.ini
+-- 
+2.7.4
+

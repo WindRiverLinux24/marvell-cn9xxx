@@ -1,0 +1,53 @@
+From 7f945ca1f4a2578960465da14633e4ac6da4e274 Mon Sep 17 00:00:00 2001
+From: Liron Himi <lironh@marvell.com>
+Date: Sat, 22 Dec 2018 00:23:03 +0200
+Subject: [PATCH 01/30] mk: add Marvell ARMADA architecture based on armv8-a
+
+This patch introduces armada target to address difference
+in number of cores, no numa support
+
+Change-Id: Ieaabe77b165000fe1280f98105329a0e63833b92
+Signed-off-by: Liron Himi <lironh@marvell.com>
+Reviewed-on: https://sj1git1.cavium.com/1168
+Reviewed-by: Alan Winkowski
+Reviewed-by: Liron Himi
+Tested-by: Liron Himi
+---
+ config/defconfig_arm64-armada-linuxapp-gcc | 25 +++++++++++++++++++++++++
+ 1 file changed, 25 insertions(+)
+ create mode 100644 config/defconfig_arm64-armada-linuxapp-gcc
+
+diff --git a/config/defconfig_arm64-armada-linuxapp-gcc b/config/defconfig_arm64-armada-linuxapp-gcc
+new file mode 100644
+index 0000000..761fbe1
+--- /dev/null
++++ b/config/defconfig_arm64-armada-linuxapp-gcc
+@@ -0,0 +1,25 @@
++/* SPDX-License-Identifier: BSD-3-Clause
++ * Copyright(c) 2018 Marvell International Ltd.
++ * All rights reserved.
++ */
++
++#include "defconfig_arm64-armv8a-linuxapp-gcc"
++
++CONFIG_RTE_LIBRTE_MVEP_COMMON=y
++CONFIG_RTE_LIBRTE_MVPP2_PMD=y
++CONFIG_RTE_LIBRTE_MVNETA_PMD=y
++CONFIG_RTE_LIBRTE_PMD_MVSAM_CRYPTO=y
++
++#
++# Compile Environment Abstraction Layer
++#
++CONFIG_RTE_MAX_LCORE=16
++CONFIG_RTE_MAX_NUMA_NODES=1
++CONFIG_RTE_CACHE_LINE_SIZE=64
++
++# Disable NXP as it is conflict with MUSDK
++CONFIG_RTE_LIBRTE_DPAA_BUS=n
++
++# Doesn't support NUMA
++CONFIG_RTE_EAL_NUMA_AWARE_HUGEPAGES=n
++CONFIG_RTE_LIBRTE_VHOST_NUMA=n
+-- 
+2.7.4
+

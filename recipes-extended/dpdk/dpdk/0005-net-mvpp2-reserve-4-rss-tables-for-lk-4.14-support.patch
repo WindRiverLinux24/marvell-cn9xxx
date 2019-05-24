@@ -1,0 +1,35 @@
+From 94c807fc86a5a8066990cd6eba12ff6f682196d3 Mon Sep 17 00:00:00 2001
+From: yuric <yuric@marvell.com>
+Date: Sun, 16 Dec 2018 12:24:45 +0200
+Subject: [PATCH 05/30] net/mvpp2: reserve 4 rss tables for lk-4.14 support
+
+Change-Id: Ibfb036c57c3bbd945413ff9a3335f4ab199405f9
+Signed-off-by: yuric <yuric@marvell.com>
+Reviewed-on: http://vgitil04.il.marvell.com:8080/61788
+Reviewed-by: Alan Winkowski <walan@marvell.com>
+Reviewed-by: Liron Himi <lironh@marvell.com>
+Tested-by: Liron Himi <lironh@marvell.com>
+Reviewed-on: https://sj1git1.cavium.com/1183
+Reviewed-by: Alan Winkowski
+Reviewed-by: Liron Himi
+Tested-by: Liron Himi
+---
+ drivers/net/mvpp2/mrvl_ethdev.c | 2 +-
+ 1 file changed, 1 insertion(+), 1 deletion(-)
+
+diff --git a/drivers/net/mvpp2/mrvl_ethdev.c b/drivers/net/mvpp2/mrvl_ethdev.c
+index f9eacf2..9c104ba 100644
+--- a/drivers/net/mvpp2/mrvl_ethdev.c
++++ b/drivers/net/mvpp2/mrvl_ethdev.c
+@@ -32,7 +32,7 @@
+ /* bitmask with reserved bpools */
+ #define MRVL_MUSDK_BPOOLS_RESERVED 0x07
+ /* bitmask with reserved kernel RSS tables */
+-#define MRVL_MUSDK_RSS_RESERVED 0x01
++#define MRVL_MUSDK_RSS_RESERVED 0x0F
+ /* maximum number of available hifs */
+ #define MRVL_MUSDK_HIFS_MAX 9
+ 
+-- 
+2.7.4
+

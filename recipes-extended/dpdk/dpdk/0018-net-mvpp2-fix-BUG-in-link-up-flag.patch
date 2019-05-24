@@ -1,0 +1,43 @@
+From 71ff9bfc97055b086191e9326d3267a1ec6f38dd Mon Sep 17 00:00:00 2001
+From: Shlomi Gridish <sgridish@marvell.com>
+Date: Thu, 20 Dec 2018 13:00:40 +0200
+Subject: [PATCH 18/30] net/mvpp2: fix BUG in link-up flag
+
+Change-Id: Ifa536582b4180b60b17cb26f7487d04ea1ba216d
+Signed-off-by: Shlomi Gridish <sgridish@marvell.com>
+Reviewed-on: http://vgitil04.il.marvell.com:8080/61992
+Tested-by: iSoC Platform CI <ykjenk@marvell.com>
+Reviewed-by: Liron Himi <lironh@marvell.com>
+Reviewed-on: https://sj1git1.cavium.com/1939
+Reviewed-by: Shlomi Gridish
+Reviewed-by: Liron Himi
+Tested-by: Liron Himi
+---
+ drivers/net/mvpp2/mrvl_ethdev.c | 4 ++--
+ 1 file changed, 2 insertions(+), 2 deletions(-)
+
+diff --git a/drivers/net/mvpp2/mrvl_ethdev.c b/drivers/net/mvpp2/mrvl_ethdev.c
+index 8af4502..04dc5a7 100644
+--- a/drivers/net/mvpp2/mrvl_ethdev.c
++++ b/drivers/net/mvpp2/mrvl_ethdev.c
+@@ -414,8 +414,6 @@ mrvl_dev_configure(struct rte_eth_dev *dev)
+ 	if (ret < 0)
+ 		return ret;
+ 
+-	dev->data->dev_link.link_status = ETH_LINK_UP;
+-
+ 	return 0;
+ }
+ 
+@@ -2988,6 +2986,8 @@ mrvl_eth_dev_create(struct rte_vdev_device *vdev, const char *name)
+ 	mrvl_set_tx_function(eth_dev);
+ 	eth_dev->dev_ops = &mrvl_ops;
+ 
++	eth_dev->data->dev_link.link_status = ETH_LINK_UP;
++
+ 	rte_eth_dev_probing_finish(eth_dev);
+ 	return 0;
+ out_free:
+-- 
+2.7.4
+

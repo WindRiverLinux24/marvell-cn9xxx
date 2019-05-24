@@ -1,0 +1,68 @@
+From 266be6cb1ab0eb527697d7dc0aa2f4ef84540277 Mon Sep 17 00:00:00 2001
+From: yuric <yuric@marvell.com>
+Date: Thu, 13 Dec 2018 15:24:20 +0200
+Subject: [PATCH 07/30] net/mvpp2: cosmetic changes to cookie usage
+
+No need to add high address to cookie on transmit side, as it has
+already 64bit value
+
+Change-Id: I6c469fb1867cf12c1551784d68656e2ddbad47f4
+Signed-off-by: yuric <yuric@marvell.com>
+Reviewed-on: http://vgitil04.il.marvell.com:8080/61756
+Reviewed-by: Alan Winkowski <walan@marvell.com>
+Reviewed-by: Liron Himi <lironh@marvell.com>
+Tested-by: Liron Himi <lironh@marvell.com>
+Reviewed-on: https://sj1git1.cavium.com/1185
+Reviewed-by: Alan Winkowski
+Reviewed-by: Liron Himi
+Tested-by: Liron Himi
+---
+ drivers/net/mvpp2/mrvl_ethdev.c | 13 +++++++------
+ 1 file changed, 7 insertions(+), 6 deletions(-)
+
+diff --git a/drivers/net/mvpp2/mrvl_ethdev.c b/drivers/net/mvpp2/mrvl_ethdev.c
+index a105a2e..fc73f49 100644
+--- a/drivers/net/mvpp2/mrvl_ethdev.c
++++ b/drivers/net/mvpp2/mrvl_ethdev.c
+@@ -1584,14 +1584,16 @@ mrvl_fill_bpool(struct mrvl_rxq *rxq, int num)
+ 		if (((uint64_t)mbufs[i] & MRVL_COOKIE_HIGH_ADDR_MASK)
+ 			!= cookie_addr_high) {
+ 			MRVL_LOG(ERR,
+-				"mbuf virtual addr high 0x%lx out of range",
+-				(uint64_t)mbufs[i] >> 32);
++				"mbuf virtual addr high is out of range "
++				"0x%x instead of 0x%x\n",
++				(uint32_t)((uint64_t)mbufs[i] >> 32),
++				(uint32_t)(cookie_addr_high >> 32));
+ 			goto out;
+ 		}
+ 
+ 		entries[i].buff.addr =
+ 			rte_mbuf_data_iova_default(mbufs[i]);
+-		entries[i].buff.cookie = (uint64_t)mbufs[i];
++		entries[i].buff.cookie = (uintptr_t)mbufs[i];
+ 		entries[i].bpool = bpool;
+ 	}
+ 
+@@ -2491,8 +2493,7 @@ mrvl_free_sent_buffers(struct pp2_ppio *ppio, struct pp2_hif *hif,
+ 		if (unlikely(!entry->bpool)) {
+ 			struct rte_mbuf *mbuf;
+ 
+-			mbuf = (struct rte_mbuf *)
+-			       (cookie_addr_high | entry->buff.cookie);
++			mbuf = (struct rte_mbuf *)entry->buff.cookie;
+ 			rte_pktmbuf_free(mbuf);
+ 			skip_bufs = 1;
+ 			goto skip;
+@@ -2605,7 +2606,7 @@ mrvl_tx_pkt_burst(void *txq, struct rte_mbuf **tx_pkts, uint16_t nb_pkts)
+ 		for (i = nb_pkts; i < num; i++) {
+ 			sq->head = (MRVL_PP2_TX_SHADOWQ_SIZE + sq->head - 1) &
+ 				MRVL_PP2_TX_SHADOWQ_MASK;
+-			addr = cookie_addr_high | sq->ent[sq->head].buff.cookie;
++			addr = sq->ent[sq->head].buff.cookie;
+ 			bytes_sent -=
+ 				rte_pktmbuf_pkt_len((struct rte_mbuf *)addr);
+ 		}
+-- 
+2.7.4
+

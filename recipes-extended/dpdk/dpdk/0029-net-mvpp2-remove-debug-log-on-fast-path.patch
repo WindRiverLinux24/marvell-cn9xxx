@@ -1,0 +1,44 @@
+From f0f220005a3e9e22d4e4e5ca93adf463ed68aeaa Mon Sep 17 00:00:00 2001
+From: Liron Himi <lironh@marvell.com>
+Date: Sun, 24 Feb 2019 20:02:12 +0200
+Subject: [PATCH 29/30] net/mvpp2: remove debug log on fast-path
+
+in case of non-ip frame the current code reached the 'default'
+case which result with function call to log a msg.
+those kind of calls should not be performed on fast-path.
+
+The performance for this kind of frames increased by 50%
+
+Change-Id: I0380a5f1550a79b3810f98c4a89632db88f7afa0
+Signed-off-by: Liron Himi <lironh@marvell.com>
+Reviewed-on: https://sj1git1.cavium.com/4729
+Tested-by: sa_ip-sw-jenkins
+Reviewed-by: Alan Winkowski
+Reviewed-by: Liron Himi <liron.himi@marvell.com>
+---
+ drivers/net/mvpp2/mrvl_ethdev.c | 2 --
+ 1 file changed, 2 deletions(-)
+
+diff --git a/drivers/net/mvpp2/mrvl_ethdev.c b/drivers/net/mvpp2/mrvl_ethdev.c
+index 9630d0a..a4b3ada 100644
+--- a/drivers/net/mvpp2/mrvl_ethdev.c
++++ b/drivers/net/mvpp2/mrvl_ethdev.c
+@@ -2358,7 +2358,6 @@ mrvl_desc_to_packet_type_and_offset(struct pp2_ppio_desc *desc,
+ 		*l4_offset = *l3_offset + MRVL_ARP_LENGTH;
+ 		break;
+ 	default:
+-		MRVL_LOG(DEBUG, "Failed to recognise l3 packet type");
+ 		break;
+ 	}
+ 
+@@ -2370,7 +2369,6 @@ mrvl_desc_to_packet_type_and_offset(struct pp2_ppio_desc *desc,
+ 		packet_type |= RTE_PTYPE_L4_UDP;
+ 		break;
+ 	default:
+-		MRVL_LOG(DEBUG, "Failed to recognise l4 packet type");
+ 		break;
+ 	}
+ 
+-- 
+2.7.4
+

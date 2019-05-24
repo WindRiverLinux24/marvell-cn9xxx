@@ -1,0 +1,130 @@
+From 7f40d60d0fe64a4519448d854709f95146581482 Mon Sep 17 00:00:00 2001
+From: yuric <yuric@marvell.com>
+Date: Thu, 13 Dec 2018 15:18:21 +0200
+Subject: [PATCH 06/30] net/mvpp2: add xstats_by_id callbacks
+
+Change-Id: I48e1162b0d0bec476bc957666813d9042e7f86dc
+Signed-off-by: yuric <yuric@marvell.com>
+Reviewed-on: http://vgitil04.il.marvell.com:8080/61754
+Reviewed-by: Alan Winkowski <walan@marvell.com>
+Reviewed-by: Liron Himi <lironh@marvell.com>
+Tested-by: Liron Himi <lironh@marvell.com>
+Reviewed-on: https://sj1git1.cavium.com/1184
+Reviewed-by: Alan Winkowski
+Reviewed-by: Liron Himi
+Tested-by: Liron Himi
+---
+ drivers/net/mvpp2/mrvl_ethdev.c | 90 +++++++++++++++++++++++++++++++++++++++++
+ 1 file changed, 90 insertions(+)
+
+diff --git a/drivers/net/mvpp2/mrvl_ethdev.c b/drivers/net/mvpp2/mrvl_ethdev.c
+index 9c104ba..a105a2e 100644
+--- a/drivers/net/mvpp2/mrvl_ethdev.c
++++ b/drivers/net/mvpp2/mrvl_ethdev.c
+@@ -1968,6 +1968,94 @@ mrvl_eth_filter_ctrl(struct rte_eth_dev *dev __rte_unused,
+ }
+ 
+ /**
++ * DPDK callback to get xstats by id.
++ *
++ * @param dev
++ *   Pointer to the device structure.
++ * @param ids
++ *   Pointer to the ids table.
++ * @param values
++ *   Pointer to the values table.
++ * @param n
++ *   Values table size.
++ * @returns
++ *   Number of read values, negative value otherwise.
++ */
++static int
++mrvl_xstats_get_by_id(struct rte_eth_dev *dev, const uint64_t *ids,
++		      uint64_t *values, unsigned int n)
++{
++	unsigned int i, num = RTE_DIM(mrvl_xstats_tbl);
++	uint64_t vals[n];
++	int ret;
++
++	if (!ids) {
++		struct rte_eth_xstat xstats[num];
++		int j;
++
++		ret = mrvl_xstats_get(dev, xstats, num);
++		for (j = 0; j < ret; i++)
++			values[j] = xstats[j].value;
++
++		return ret;
++	}
++
++	ret = mrvl_xstats_get_by_id(dev, NULL, vals, n);
++	if (ret < 0)
++		return ret;
++
++	for (i = 0; i < n; i++) {
++		if (ids[i] >= num) {
++			MRVL_LOG(ERR, "id value is not valid\n");
++			return -1;
++		}
++
++		values[i] = vals[ids[i]];
++	}
++
++	return n;
++}
++
++/**
++ * DPDK callback to get xstats names by ids.
++ *
++ * @param dev
++ *   Pointer to the device structure.
++ * @param xstats_names
++ *   Pointer to table with xstats names.
++ * @param ids
++ *   Pointer to table with ids.
++ * @param size
++ *   Xstats names table size.
++ * @returns
++ *   Number of names read, negative value otherwise.
++ */
++static int
++mrvl_xstats_get_names_by_id(struct rte_eth_dev *dev,
++			    struct rte_eth_xstat_name *xstats_names,
++			    const uint64_t *ids, unsigned int size)
++{
++	unsigned int i, num = RTE_DIM(mrvl_xstats_tbl);
++	struct rte_eth_xstat_name names[num];
++
++	if (!ids)
++		return mrvl_xstats_get_names(dev, xstats_names, size);
++
++	mrvl_xstats_get_names(dev, names, size);
++	for (i = 0; i < size; i++) {
++		if (ids[i] >= num) {
++			MRVL_LOG(ERR, "id value is not valid");
++			return -1;
++		}
++
++		snprintf(xstats_names[i].name, RTE_ETH_XSTATS_NAME_SIZE,
++			 "%s", names[ids[i]].name);
++	}
++
++	return size;
++}
++
++/**
+  * DPDK callback to get rte_mtr callbacks.
+  *
+  * @param dev
+@@ -2042,6 +2130,8 @@ static const struct eth_dev_ops mrvl_ops = {
+ 	.rss_hash_update = mrvl_rss_hash_update,
+ 	.rss_hash_conf_get = mrvl_rss_hash_conf_get,
+ 	.filter_ctrl = mrvl_eth_filter_ctrl,
++	.xstats_get_by_id = mrvl_xstats_get_by_id,
++	.xstats_get_names_by_id = mrvl_xstats_get_names_by_id,
+ 	.mtr_ops_get = mrvl_mtr_ops_get,
+ 	.tm_ops_get = mrvl_tm_ops_get,
+ };
+-- 
+2.7.4
+

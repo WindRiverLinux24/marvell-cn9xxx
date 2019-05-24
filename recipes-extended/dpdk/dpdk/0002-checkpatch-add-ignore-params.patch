@@ -1,0 +1,37 @@
+From ba91437d18fa489c7abc63596824a47317cb14f8 Mon Sep 17 00:00:00 2001
+From: yuric <yuric@marvell.com>
+Date: Mon, 19 Nov 2018 11:10:23 +0200
+Subject: [PATCH 02/30] checkpatch: add ignore params
+
+Change-Id: I90139c78a3184f50f309b3860182d8089e79c6b2
+Signed-off-by: yuric <yuric@marvell.com>
+Reviewed-on: http://vgitil04.il.marvell.com:8080/61039
+Tested-by: iSoC Platform CI <ykjenk@marvell.com>
+Reviewed-by: Liron Himi <lironh@marvell.com>
+Reviewed-on: https://sj1git1.cavium.com/1195
+Reviewed-by: Alan Winkowski
+Reviewed-by: Liron Himi
+Tested-by: Liron Himi
+---
+ devtools/checkpatches.sh | 2 +-
+ 1 file changed, 1 insertion(+), 1 deletion(-)
+ mode change 100755 => 100644 devtools/checkpatches.sh
+
+diff --git a/devtools/checkpatches.sh b/devtools/checkpatches.sh
+old mode 100755
+new mode 100644
+index ee8debe..b94394f
+--- a/devtools/checkpatches.sh
++++ b/devtools/checkpatches.sh
+@@ -21,7 +21,7 @@ VOLATILE,PREFER_PACKED,PREFER_ALIGNED,PREFER_PRINTF,\
+ PREFER_KERNEL_TYPES,BIT_MACRO,CONST_STRUCT,\
+ SPLIT_STRING,LONG_LINE_STRING,\
+ LINE_SPACING,PARENTHESIS_ALIGNMENT,NETWORKING_BLOCK_COMMENT_STYLE,\
+-NEW_TYPEDEFS,COMPARISON_TO_NULL"
++NEW_TYPEDEFS,COMPARISON_TO_NULL,GERRIT_CHANGE_ID"
+ 
+ clean_tmp_files() {
+ 	if echo $tmpinput | grep -q '^checkpatches\.' ; then
+-- 
+2.7.4
+

@@ -1,0 +1,39 @@
+From ededc45db394ab2e2a18f8cd73e62851bc8aad84 Mon Sep 17 00:00:00 2001
+From: Liron Himi <lironh@marvell.com>
+Date: Tue, 18 Dec 2018 16:44:58 +0200
+Subject: [PATCH 10/30] net/mvneta: fix: ierror counted twice
+
+Change-Id: Ieaac221e774e4caf1f9105e6761540df04313d4f
+Signed-off-by: Liron Himi <lironh@marvell.com>
+Reviewed-on: http://vgitil04.il.marvell.com:8080/61932
+Reviewed-by: Alan Winkowski <walan@marvell.com>
+Tested-by: iSoC Platform CI <ykjenk@marvell.com>
+(cherry picked from commit a2ebd1407b04bf3fed296ab200fd87b7e039ba19)
+Reviewed-on: http://vgitil04.il.marvell.com:8080/61937
+Reviewed-on: https://sj1git1.cavium.com/1188
+Reviewed-by: Alan Winkowski
+Reviewed-by: Liron Himi
+Tested-by: Liron Himi
+---
+ drivers/net/mvneta/mvneta_ethdev.c | 5 +----
+ 1 file changed, 1 insertion(+), 4 deletions(-)
+
+diff --git a/drivers/net/mvneta/mvneta_ethdev.c b/drivers/net/mvneta/mvneta_ethdev.c
+index 2d76664..9198568 100644
+--- a/drivers/net/mvneta/mvneta_ethdev.c
++++ b/drivers/net/mvneta/mvneta_ethdev.c
+@@ -706,10 +706,7 @@ mvneta_stats_get(struct rte_eth_dev *dev, struct rte_eth_stats *stats)
+ 	stats->imissed += ppio_stats.rx_discard +
+ 			  ppio_stats.rx_overrun -
+ 			  priv->prev_stats.imissed;
+-
+-	stats->ierrors = ppio_stats.rx_packets_err +
+-			ppio_stats.rx_errors +
+-			ppio_stats.rx_crc_error -
++	stats->ierrors = ppio_stats.rx_packets_err -
+ 			priv->prev_stats.ierrors;
+ 	stats->oerrors = ppio_stats.tx_errors - priv->prev_stats.oerrors;
+ 
+-- 
+2.7.4
+
