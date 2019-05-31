@@ -75,6 +75,8 @@ The following features are not supported or validated.
 	x SPI Flash: 1x 128 Mb SPI NOR Flash memory
 	x Suspend
 	x TDM: Time-Division Multiplexing controller
+	x CPU Hotplug
+	x Kexec/Kdump
 
 4. BSP Notes
 ============
