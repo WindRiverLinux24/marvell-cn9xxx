@@ -44,8 +44,8 @@ The following BSP features are validated and supported.
 			+ 1x 10G Ethernet port over SFP+ connector
 
 	o USB
-		+ USB 3.0 XHCI controller:
-			+ 3x USB 3.0 Host port
+		+ USB XHCI controller:
+			+ 2x USB 2.0 Host port
 
 	o Storage
 		+ eMMC card: 1x eMMC 8 GB device
