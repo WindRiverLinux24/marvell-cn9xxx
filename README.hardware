@@ -16,18 +16,24 @@ Table of Contents
 This BSP supports the following boards:
 
   + Marvell CN9130 development board, SoC: cn9130-A1; AP807-B0; 3xCP115-A0
+  + Marvell CN96XX-CRB board, Board Revision: R1P1
 
 2. Change History
 =================
 
+  - 2019/08 (LINUXPG-20): Wind River Linux 10.18 RCPL09, add CN96xx support based
+			  on Marvell SDK10.0-ED1001 CN96xx Only
   - 2019/07 (LINUXPG-21): Wind River Linux 10.18 RCPL08, Standard support based
-			on Marvell SDK10.0_19.06.0
+			  on Marvell SDK10.0_19.06.0
 
-3. BSP Features
-===============
+3. BSP Notes
+============
 
-3.1 Supported Features
-~~~~~~~~~~~~~~~~~~~~~~
+3.1 Marvell CN9130
+------------------
+
+3.1.1 Supported Features
+~~~~~~~~~~~~~~~~~~~~~~~~
 
 The following BSP features are validated and supported.
 
@@ -62,8 +68,8 @@ The following BSP features are validated and supported.
 		+ UART: 8250/16550A compatible serial port
 		+ Watchdog
 
-3.2 Unsupported Features
-~~~~~~~~~~~~~~~~~~~~~~~~
+3.1.2 Unsupported Features
+~~~~~~~~~~~~~~~~~~~~~~~~~~
 
 The following features are not supported or validated.
 
@@ -78,14 +84,8 @@ The following features are not supported or validated.
 	x CPU Hotplug
 	x Kexec/Kdump
 
-4. BSP Notes
-============
-
-4.1 Marvell CN9130 development board
-====================================
-
-4.1.1 Validated Board Info
---------------------------
+3.1.3 Validated Board Info
+~~~~~~~~~~~~~~~~~~~~~~~~~~
 
 This BSP is only validated in following environment. If you use this BSP
 in a different environment it may possibly have some issues.
@@ -94,3 +94,64 @@ in a different environment it may possibly have some issues.
 	Board: Marvell CN9130 development board (CP NOR) setup(A)
 	BootLoader:		U-Boot
 	BootLoader Version:	2018.03-devel-19.01.0-gc6a8c21 (Jan 24 2019 - 12:10:33 +0000)
+
+
+3.2 Marvell CN96XX-CRB
+----------------------
+
+3.2.1 Supported Features
+~~~~~~~~~~~~~~~~~~~~~~~~
+
+The following BSP features are validated and supported.
+
+	o Bus
+		+ I2C:
+			+ 6x THUNDERX TWSI / I2C Controller
+		+ PCI-Express:
+			+ 1x PCIe x8 Gen4
+			+ 1x Mini PCIe
+			+ 1x NVMe x4
+
+	o Network
+		+ Ethernet:
+			+ 2x SFP28 direct connection
+			+ 1x 10GBase-T copper connection
+			+ 1x 1G AX88179 USB to Ethernet
+
+	o USB
+		+ USB XHCI controller:
+			+ 1x USB 3.0 Host port
+
+	o Storage
+		+ Micso SD card
+		+ 2x 32M SPI Flash
+
+	o Misc Devices
+		+ GPIO
+		+ IOMMU
+		+ RTC
+		+ Temperature sensor
+		+ UART: 8250/16550A compatible serial port
+		+ Watchdog
+
+3.2.2 Unsupported Features
+~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+The following features are not supported or validated.
+
+	x eMMC card: 1x eMMC 4 GB device
+	x CPU Freq
+	x 1x QSFP28
+	x 4x SFP28
+
+3.2.3 Validated Board Info
+~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+This BSP is only validated in following environment. If you use this BSP
+in a different environment it may possibly have some issues.
+
+	Board Model:    	cn96xx-crb
+	Board Revision: 	R1P1
+	Board Serial:   	CN96xx-CRB-R1P1-0043
+	BootLoader:		U-Boot
+	BootLoader Version:	2018.03-2.0.0 (May 07 2019 - 11:51:06 +0000), Build: cs-SDK10.0-ED1001
