@@ -1,0 +1,304 @@
+From bc14d30622c376a803fe019c29afafe5d454186d Mon Sep 17 00:00:00 2001
+From: Jerin Jacob <jerinj@marvell.com>
+Date: Tue, 28 May 2019 14:25:22 +0530
+Subject: [PATCH 083/154] net/octeontx2: add build and doc infrastructure
+
+Adding bare minimum PMD library and doc build infrastructure
+and claim the maintainership for octeontx2 PMD.
+
+Signed-off-by: Jerin Jacob <jerinj@marvell.com>
+Signed-off-by: Nithin Dabilpuram <ndabilpuram@marvell.com>
+Signed-off-by: Kiran Kumar K <kirankumark@marvell.com>
+---
+ MAINTAINERS                                        |  9 ++++++
+ config/common_base                                 |  5 ++++
+ doc/guides/nics/features/octeontx2.ini             |  9 ++++++
+ doc/guides/nics/features/octeontx2_vec.ini         |  9 ++++++
+ doc/guides/nics/features/octeontx2_vf.ini          |  9 ++++++
+ doc/guides/nics/index.rst                          |  1 +
+ doc/guides/nics/octeontx2.rst                      | 32 ++++++++++++++++++++++
+ doc/guides/platform/octeontx2.rst                  |  3 ++
+ drivers/net/Makefile                               |  1 +
+ drivers/net/meson.build                            |  6 +++-
+ drivers/net/octeontx2/Makefile                     | 30 ++++++++++++++++++++
+ drivers/net/octeontx2/meson.build                  |  9 ++++++
+ drivers/net/octeontx2/otx2_ethdev.c                |  3 ++
+ .../net/octeontx2/rte_pmd_octeontx2_version.map    |  4 +++
+ mk/rte.app.mk                                      |  2 ++
+ 15 files changed, 131 insertions(+), 1 deletion(-)
+ create mode 100644 doc/guides/nics/features/octeontx2.ini
+ create mode 100644 doc/guides/nics/features/octeontx2_vec.ini
+ create mode 100644 doc/guides/nics/features/octeontx2_vf.ini
+ create mode 100644 doc/guides/nics/octeontx2.rst
+ create mode 100644 drivers/net/octeontx2/Makefile
+ create mode 100644 drivers/net/octeontx2/meson.build
+ create mode 100644 drivers/net/octeontx2/otx2_ethdev.c
+ create mode 100644 drivers/net/octeontx2/rte_pmd_octeontx2_version.map
+
+diff --git a/MAINTAINERS b/MAINTAINERS
+index 85ca38b9e95d..8527611ed464 100644
+--- a/MAINTAINERS
++++ b/MAINTAINERS
+@@ -620,6 +620,15 @@ F: drivers/net/mvneta/
+ F: doc/guides/nics/mvneta.rst
+ F: doc/guides/nics/features/mvneta.ini
+ 
++Marvell OCTEON TX2
++M: Jerin Jacob <jerinj@marvell.com>
++M: Nithin Dabilpuram <ndabilpuram@marvell.com>
++M: Kiran Kumar K <kirankumark@marvell.com>
++T: git://dpdk.org/next/dpdk-next-net-mrvl
++F: drivers/net/octeontx2/
++F: doc/guides/nics/features/octeontx2*.ini
++F: doc/guides/nics/octeontx2.rst
++
+ Mellanox mlx4
+ M: Matan Azrad <matan@mellanox.com>
+ M: Shahaf Shuler <shahafs@mellanox.com>
+diff --git a/config/common_base b/config/common_base
+index 8776eed450f4..8eb2ee4c6b6a 100644
+--- a/config/common_base
++++ b/config/common_base
+@@ -369,6 +369,11 @@ CONFIG_RTE_LIBRTE_LIO_DEBUG_REGS=n
+ #
+ CONFIG_RTE_LIBRTE_OCTEONTX_PMD=y
+ 
++#
++# Compile burst-oriented Marvell OCTEON TX2 network PMD driver
++#
++CONFIG_RTE_LIBRTE_OCTEONTX2_PMD=y
++
+ #
+ # Compile WRS accelerated virtual port (AVP) guest PMD driver
+ #
+diff --git a/doc/guides/nics/features/octeontx2.ini b/doc/guides/nics/features/octeontx2.ini
+new file mode 100644
+index 000000000000..84d5ad779122
+--- /dev/null
++++ b/doc/guides/nics/features/octeontx2.ini
+@@ -0,0 +1,9 @@
++;
++; Supported features of the 'octeontx2' network poll mode driver.
++;
++; Refer to default.ini for the full list of available PMD features.
++;
++[Features]
++Linux VFIO           = Y
++ARMv8                = Y
++Usage doc            = Y
+diff --git a/doc/guides/nics/features/octeontx2_vec.ini b/doc/guides/nics/features/octeontx2_vec.ini
+new file mode 100644
+index 000000000000..5fd7e4c5cbc5
+--- /dev/null
++++ b/doc/guides/nics/features/octeontx2_vec.ini
+@@ -0,0 +1,9 @@
++;
++; Supported features of the 'octeontx2_vec' network poll mode driver.
++;
++; Refer to default.ini for the full list of available PMD features.
++;
++[Features]
++Linux VFIO           = Y
++ARMv8                = Y
++Usage doc            = Y
+diff --git a/doc/guides/nics/features/octeontx2_vf.ini b/doc/guides/nics/features/octeontx2_vf.ini
+new file mode 100644
+index 000000000000..3128cc120446
+--- /dev/null
++++ b/doc/guides/nics/features/octeontx2_vf.ini
+@@ -0,0 +1,9 @@
++;
++; Supported features of the 'octeontx2_vf' network poll mode driver.
++;
++; Refer to default.ini for the full list of available PMD features.
++;
++[Features]
++Linux VFIO           = Y
++ARMv8                = Y
++Usage doc            = Y
+diff --git a/doc/guides/nics/index.rst b/doc/guides/nics/index.rst
+index 1e4670501172..428fdf8d2442 100644
+--- a/doc/guides/nics/index.rst
++++ b/doc/guides/nics/index.rst
+@@ -39,6 +39,7 @@ Network Interface Controller Drivers
+     netvsc
+     nfp
+     octeontx
++    octeontx2
+     qede
+     sfc_efx
+     softnic
+diff --git a/doc/guides/nics/octeontx2.rst b/doc/guides/nics/octeontx2.rst
+new file mode 100644
+index 000000000000..f0bd36be3a45
+--- /dev/null
++++ b/doc/guides/nics/octeontx2.rst
+@@ -0,0 +1,32 @@
++..  SPDX-License-Identifier: BSD-3-Clause
++    Copyright(C) 2019 Marvell International Ltd.
++
++OCTEON TX2 Poll Mode driver
++===========================
++
++The OCTEON TX2 ETHDEV PMD (**librte_pmd_octeontx2**) provides poll mode ethdev
++driver support for the inbuilt network device found in **Marvell OCTEON TX2**
++SoC family as well as for their virtual functions (VF) in SR-IOV context.
++
++More information can be found at `Marvell Official Website
++<https://www.marvell.com/embedded-processors/infrastructure-processors>`_.
++
++Features
++--------
++
++Features of the OCTEON TX2 Ethdev PMD are:
++
++
++Prerequisites
++-------------
++
++See :doc:`../platform/octeontx2` for setup information.
++
++Compile time Config Options
++---------------------------
++
++The following options may be modified in the ``config`` file.
++
++- ``CONFIG_RTE_LIBRTE_OCTEONTX2_PMD`` (default ``y``)
++
++  Toggle compilation of the ``librte_pmd_octeontx2`` driver.
+diff --git a/doc/guides/platform/octeontx2.rst b/doc/guides/platform/octeontx2.rst
+index b2a4c030ca37..7d1fead3ad97 100644
+--- a/doc/guides/platform/octeontx2.rst
++++ b/doc/guides/platform/octeontx2.rst
+@@ -98,6 +98,9 @@ HW Offload Drivers
+ 
+ This section lists dataplane H/W block(s) available in OCTEON TX2 SoC.
+ 
++#. **Ethdev Driver**
++   See :doc:`../nics/octeontx2` for NIX Ethdev driver information.
++
+ #. **Mempool Driver**
+    See :doc:`../mempool/octeontx2` for NPA mempool driver information.
+ 
+diff --git a/drivers/net/Makefile b/drivers/net/Makefile
+index c0386feb9dbc..756bbc6bccb3 100644
+--- a/drivers/net/Makefile
++++ b/drivers/net/Makefile
+@@ -41,6 +41,7 @@ DIRS-$(CONFIG_RTE_LIBRTE_NFP_PMD) += nfp
+ DIRS-$(CONFIG_RTE_LIBRTE_BNXT_PMD) += bnxt
+ DIRS-$(CONFIG_RTE_LIBRTE_PMD_NULL) += null
+ DIRS-$(CONFIG_RTE_LIBRTE_OCTEONTX_PMD) += octeontx
++DIRS-$(CONFIG_RTE_LIBRTE_OCTEONTX2_PMD) += octeontx2
+ DIRS-$(CONFIG_RTE_LIBRTE_PMD_PCAP) += pcap
+ DIRS-$(CONFIG_RTE_LIBRTE_QEDE_PMD) += qede
+ DIRS-$(CONFIG_RTE_LIBRTE_PMD_RING) += ring
+diff --git a/drivers/net/meson.build b/drivers/net/meson.build
+index 980eec233c86..18fdd070c1e6 100644
+--- a/drivers/net/meson.build
++++ b/drivers/net/meson.build
+@@ -27,7 +27,11 @@ drivers = ['af_packet',
+ 	'mvpp2',
+ 	'netvsc',
+ 	'nfp',
+-	'null', 'octeontx', 'pcap', 'qede', 'ring',
++	'null',
++	'octeontx',
++	'octeontx2',
++	'pcap',
++	'ring',
+ 	'sfc',
+ 	'softnic',
+ 	'szedata2',
+diff --git a/drivers/net/octeontx2/Makefile b/drivers/net/octeontx2/Makefile
+new file mode 100644
+index 000000000000..9c467352ffc3
+--- /dev/null
++++ b/drivers/net/octeontx2/Makefile
+@@ -0,0 +1,30 @@
++# SPDX-License-Identifier: BSD-3-Clause
++# Copyright(C) 2019 Marvell International Ltd.
++#
++
++include $(RTE_SDK)/mk/rte.vars.mk
++
++#
++# library name
++#
++LIB = librte_pmd_octeontx2.a
++
++CFLAGS += $(WERROR_FLAGS)
++CFLAGS += -I$(RTE_SDK)/drivers/common/octeontx2
++CFLAGS += -I$(RTE_SDK)/drivers/mempool/octeontx2
++CFLAGS += -I$(RTE_SDK)/drivers/net/octeontx2
++CFLAGS += -O3
++
++EXPORT_MAP := rte_pmd_octeontx2_version.map
++
++LIBABIVER := 1
++
++#
++# all source are stored in SRCS-y
++#
++SRCS-$(CONFIG_RTE_LIBRTE_OCTEONTX2_PMD) += \
++	otx2_ethdev.c
++
++LDLIBS += -lrte_common_octeontx2 -lrte_mempool_octeontx2
++
++include $(RTE_SDK)/mk/rte.lib.mk
+diff --git a/drivers/net/octeontx2/meson.build b/drivers/net/octeontx2/meson.build
+new file mode 100644
+index 000000000000..0d0ca32da062
+--- /dev/null
++++ b/drivers/net/octeontx2/meson.build
+@@ -0,0 +1,9 @@
++# SPDX-License-Identifier: BSD-3-Clause
++# Copyright(C) 2019 Marvell International Ltd.
++#
++
++sources = files(
++		'otx2_ethdev.c',
++		)
++
++deps += ['common_octeontx2', 'mempool_octeontx2']
+diff --git a/drivers/net/octeontx2/otx2_ethdev.c b/drivers/net/octeontx2/otx2_ethdev.c
+new file mode 100644
+index 000000000000..d26535deeca1
+--- /dev/null
++++ b/drivers/net/octeontx2/otx2_ethdev.c
+@@ -0,0 +1,3 @@
++/* SPDX-License-Identifier: BSD-3-Clause
++ * Copyright(C) 2019 Marvell International Ltd.
++ */
+diff --git a/drivers/net/octeontx2/rte_pmd_octeontx2_version.map b/drivers/net/octeontx2/rte_pmd_octeontx2_version.map
+new file mode 100644
+index 000000000000..9a61188cd520
+--- /dev/null
++++ b/drivers/net/octeontx2/rte_pmd_octeontx2_version.map
+@@ -0,0 +1,4 @@
++DPDK_19.08 {
++
++	local: *;
++};
+diff --git a/mk/rte.app.mk b/mk/rte.app.mk
+index d30e0b98af68..2e6a51877b8f 100644
+--- a/mk/rte.app.mk
++++ b/mk/rte.app.mk
+@@ -110,6 +110,7 @@ endif
+ OCTEONTX2-y := $(CONFIG_RTE_LIBRTE_OCTEONTX2_MEMPOOL)
+ OCTEONTX2-y += $(CONFIG_RTE_LIBRTE_PMD_OCTEONTX2_EVENTDEV)
+ OCTEONTX2-y += $(CONFIG_RTE_LIBRTE_PMD_OCTEONTX2_DMA_RAWDEV)
++OCTEONTX2-y += $(CONFIG_RTE_LIBRTE_OCTEONTX2_PMD)
+ ifeq ($(findstring y,$(OCTEONTX2-y)),y)
+ _LDLIBS-y += -lrte_common_octeontx2
+ endif
+@@ -189,6 +190,7 @@ _LDLIBS-$(CONFIG_RTE_LIBRTE_MVPP2_PMD)      += -lrte_pmd_mvpp2
+ _LDLIBS-$(CONFIG_RTE_LIBRTE_MVNETA_PMD)     += -lrte_pmd_mvneta
+ _LDLIBS-$(CONFIG_RTE_LIBRTE_NFP_PMD)        += -lrte_pmd_nfp
+ _LDLIBS-$(CONFIG_RTE_LIBRTE_PMD_NULL)       += -lrte_pmd_null
++_LDLIBS-$(CONFIG_RTE_LIBRTE_OCTEONTX2_PMD)  += -lrte_pmd_octeontx2
+ _LDLIBS-$(CONFIG_RTE_LIBRTE_PMD_PCAP)       += -lrte_pmd_pcap -lpcap
+ _LDLIBS-$(CONFIG_RTE_LIBRTE_QEDE_PMD)       += -lrte_pmd_qede
+ _LDLIBS-$(CONFIG_RTE_LIBRTE_PMD_RING)       += -lrte_pmd_ring
+-- 
+2.14.4
+

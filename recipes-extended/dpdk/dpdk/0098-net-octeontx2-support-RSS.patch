@@ -1,0 +1,580 @@
+From 30610af8bf14309103ebbf8ed2db1ae6d2341599 Mon Sep 17 00:00:00 2001
+From: Vamsi Attunuru <vattunuru@marvell.com>
+Date: Wed, 29 May 2019 17:06:05 +0530
+Subject: [PATCH 098/154] net/octeontx2: support RSS
+
+Add RSS support and expose RSS related functions
+to implement RSS action for rte_flow driver.
+
+Signed-off-by: Vamsi Attunuru <vattunuru@marvell.com>
+Signed-off-by: Kiran Kumar K <kirankumark@marvell.com>
+---
+ doc/guides/nics/features/octeontx2.ini     |   4 +
+ doc/guides/nics/features/octeontx2_vec.ini |   4 +
+ doc/guides/nics/features/octeontx2_vf.ini  |   4 +
+ doc/guides/nics/octeontx2.rst              |   1 +
+ drivers/net/octeontx2/Makefile             |   1 +
+ drivers/net/octeontx2/meson.build          |   1 +
+ drivers/net/octeontx2/otx2_ethdev.c        |  11 +
+ drivers/net/octeontx2/otx2_ethdev.h        |  33 +++
+ drivers/net/octeontx2/otx2_rss.c           | 372 +++++++++++++++++++++++++++++
+ 9 files changed, 431 insertions(+)
+ create mode 100644 drivers/net/octeontx2/otx2_rss.c
+
+diff --git a/doc/guides/nics/features/octeontx2.ini b/doc/guides/nics/features/octeontx2.ini
+index 5664961135c9..f2d47d57b6c4 100644
+--- a/doc/guides/nics/features/octeontx2.ini
++++ b/doc/guides/nics/features/octeontx2.ini
+@@ -13,6 +13,10 @@ Link status event    = Y
+ Promiscuous mode     = Y
+ Allmulticast mode    = Y
+ Unicast MAC filter   = Y
++RSS hash             = Y
++RSS key update       = Y
++RSS reta update      = Y
++Inner RSS            = Y
+ Basic stats          = Y
+ Stats per queue      = Y
+ Extended stats       = Y
+diff --git a/doc/guides/nics/features/octeontx2_vec.ini b/doc/guides/nics/features/octeontx2_vec.ini
+index 195a48940b69..a67353d2a38b 100644
+--- a/doc/guides/nics/features/octeontx2_vec.ini
++++ b/doc/guides/nics/features/octeontx2_vec.ini
+@@ -13,6 +13,10 @@ Link status event    = Y
+ Promiscuous mode     = Y
+ Allmulticast mode    = Y
+ Unicast MAC filter   = Y
++RSS hash             = Y
++RSS key update       = Y
++RSS reta update      = Y
++Inner RSS            = Y
+ Basic stats          = Y
+ Extended stats       = Y
+ Stats per queue      = Y
+diff --git a/doc/guides/nics/features/octeontx2_vf.ini b/doc/guides/nics/features/octeontx2_vf.ini
+index 6ec83e823fa1..97d66ddde5c7 100644
+--- a/doc/guides/nics/features/octeontx2_vf.ini
++++ b/doc/guides/nics/features/octeontx2_vf.ini
+@@ -9,6 +9,10 @@ Lock-free Tx queue   = Y
+ Multiprocess aware   = Y
+ Link status          = Y
+ Link status event    = Y
++RSS hash             = Y
++RSS key update       = Y
++RSS reta update      = Y
++Inner RSS            = Y
+ Basic stats          = Y
+ Extended stats       = Y
+ Stats per queue      = Y
+diff --git a/doc/guides/nics/octeontx2.rst b/doc/guides/nics/octeontx2.rst
+index 8385c9c18f2e..3bee3f3ca6a3 100644
+--- a/doc/guides/nics/octeontx2.rst
++++ b/doc/guides/nics/octeontx2.rst
+@@ -19,6 +19,7 @@ Features of the OCTEON TX2 Ethdev PMD are:
+ - Promiscuous mode
+ - SR-IOV VF
+ - Lock-free Tx queue
++- Receiver Side Scaling (RSS)
+ - MAC filtering
+ - Port hardware statistics
+ - Link state information
+diff --git a/drivers/net/octeontx2/Makefile b/drivers/net/octeontx2/Makefile
+index e49c526bb562..455676a14133 100644
+--- a/drivers/net/octeontx2/Makefile
++++ b/drivers/net/octeontx2/Makefile
+@@ -31,6 +31,7 @@ LIBABIVER := 1
+ # all source are stored in SRCS-y
+ #
+ SRCS-$(CONFIG_RTE_LIBRTE_OCTEONTX2_PMD) += \
++	otx2_rss.c	\
+ 	otx2_mac.c	\
+ 	otx2_link.c	\
+ 	otx2_stats.c	\
+diff --git a/drivers/net/octeontx2/meson.build b/drivers/net/octeontx2/meson.build
+index 1c57b1bb44e5..8681a2642a0d 100644
+--- a/drivers/net/octeontx2/meson.build
++++ b/drivers/net/octeontx2/meson.build
+@@ -3,6 +3,7 @@
+ #
+ 
+ sources = files(
++		'otx2_rss.c',
+ 		'otx2_mac.c',
+ 		'otx2_link.c',
+ 		'otx2_stats.c',
+diff --git a/drivers/net/octeontx2/otx2_ethdev.c b/drivers/net/octeontx2/otx2_ethdev.c
+index a72c901f4f2b..5289c79e8fbd 100644
+--- a/drivers/net/octeontx2/otx2_ethdev.c
++++ b/drivers/net/octeontx2/otx2_ethdev.c
+@@ -195,6 +195,13 @@ otx2_nix_configure(struct rte_eth_dev *eth_dev)
+ 		goto fail;
+ 	}
+ 
++	/* Configure RSS */
++	rc = otx2_nix_rss_config(eth_dev);
++	if (rc) {
++		otx2_err("Failed to configure rss rc=%d", rc);
++		goto free_nix_lf;
++	}
++
+ 	/* Register queue IRQs */
+ 	rc = oxt2_nix_register_queue_irqs(eth_dev);
+ 	if (rc) {
+@@ -245,6 +252,10 @@ static const struct eth_dev_ops otx2_eth_dev_ops = {
+ 	.allmulticast_enable      = otx2_nix_allmulticast_enable,
+ 	.allmulticast_disable     = otx2_nix_allmulticast_disable,
+ 	.queue_stats_mapping_set  = otx2_nix_queue_stats_mapping,
++	.reta_update              = otx2_nix_dev_reta_update,
++	.reta_query               = otx2_nix_dev_reta_query,
++	.rss_hash_update          = otx2_nix_rss_hash_update,
++	.rss_hash_conf_get        = otx2_nix_rss_hash_conf_get,
+ 	.xstats_get               = otx2_nix_xstats_get,
+ 	.xstats_get_names         = otx2_nix_xstats_get_names,
+ 	.xstats_reset             = otx2_nix_xstats_reset,
+diff --git a/drivers/net/octeontx2/otx2_ethdev.h b/drivers/net/octeontx2/otx2_ethdev.h
+index 56517845bd43..19a4e45b07a6 100644
+--- a/drivers/net/octeontx2/otx2_ethdev.h
++++ b/drivers/net/octeontx2/otx2_ethdev.h
+@@ -59,6 +59,7 @@
+ 
+ #define NIX_MAX_SQB			512
+ #define NIX_MIN_SQB			32
++#define NIX_RSS_RETA_SIZE_MAX		256
+ /* Group 0 will be used for RSS, 1 -7 will be used for rte_flow RSS action*/
+ #define NIX_RSS_GRPS			8
+ #define NIX_HASH_KEY_SIZE		48 /* 352 Bits */
+@@ -112,14 +113,22 @@
+ 	DEV_RX_OFFLOAD_QINQ_STRIP | \
+ 	DEV_RX_OFFLOAD_TIMESTAMP)
+ 
++#define NIX_DEFAULT_RSS_CTX_GROUP  0
++#define NIX_DEFAULT_RSS_MCAM_IDX  -1
++
+ struct otx2_qint {
+ 	struct rte_eth_dev *eth_dev;
+ 	uint8_t qintx;
+ };
+ 
+ struct otx2_rss_info {
++	uint64_t nix_rss;
++	uint32_t flowkey_cfg;
+ 	uint16_t rss_size;
+ 	uint8_t rss_grps;
++	uint8_t alg_idx; /* Selected algo index */
++	uint16_t ind_tbl[NIX_RSS_RETA_SIZE_MAX];
++	uint8_t key[NIX_HASH_KEY_SIZE];
+ };
+ 
+ struct otx2_npc_flow_info {
+@@ -225,6 +234,30 @@ int otx2_nix_xstats_get_names_by_id(struct rte_eth_dev *eth_dev,
+ 				    struct rte_eth_xstat_name *xstats_names,
+ 				    const uint64_t *ids, unsigned int limit);
+ 
++/* RSS */
++void otx2_nix_rss_set_key(struct otx2_eth_dev *dev,
++			  uint8_t *key, uint32_t key_len);
++uint32_t otx2_rss_ethdev_to_nix(struct otx2_eth_dev *dev,
++				uint64_t ethdev_rss, uint8_t rss_level);
++int otx2_rss_set_hf(struct otx2_eth_dev *dev,
++		    uint32_t flowkey_cfg, uint8_t *alg_idx,
++		    uint8_t group, int mcam_index);
++int otx2_nix_rss_tbl_init(struct otx2_eth_dev *dev, uint8_t group,
++			  uint16_t *ind_tbl);
++int otx2_nix_rss_config(struct rte_eth_dev *eth_dev);
++
++int otx2_nix_dev_reta_update(struct rte_eth_dev *eth_dev,
++			     struct rte_eth_rss_reta_entry64 *reta_conf,
++			     uint16_t reta_size);
++int otx2_nix_dev_reta_query(struct rte_eth_dev *eth_dev,
++			    struct rte_eth_rss_reta_entry64 *reta_conf,
++			    uint16_t reta_size);
++int otx2_nix_rss_hash_update(struct rte_eth_dev *eth_dev,
++			     struct rte_eth_rss_conf *rss_conf);
++
++int otx2_nix_rss_hash_conf_get(struct rte_eth_dev *eth_dev,
++			       struct rte_eth_rss_conf *rss_conf);
++
+ /* CGX */
+ int otx2_cgx_rxtx_start(struct otx2_eth_dev *dev);
+ int otx2_cgx_rxtx_stop(struct otx2_eth_dev *dev);
+diff --git a/drivers/net/octeontx2/otx2_rss.c b/drivers/net/octeontx2/otx2_rss.c
+new file mode 100644
+index 000000000000..5afa21490ffa
+--- /dev/null
++++ b/drivers/net/octeontx2/otx2_rss.c
+@@ -0,0 +1,372 @@
++/* SPDX-License-Identifier: BSD-3-Clause
++ * Copyright(C) 2019 Marvell International Ltd.
++ */
++
++#include "otx2_ethdev.h"
++
++int
++otx2_nix_rss_tbl_init(struct otx2_eth_dev *dev,
++		      uint8_t group, uint16_t *ind_tbl)
++{
++	struct otx2_rss_info *rss = &dev->rss_info;
++	struct otx2_mbox *mbox = dev->mbox;
++	struct nix_aq_enq_req *req;
++	int rc, idx;
++
++	for (idx = 0; idx < rss->rss_size; idx++) {
++		req = otx2_mbox_alloc_msg_nix_aq_enq(mbox);
++		if (!req) {
++			/* The shared memory buffer can be full.
++			 * Flush it and retry
++			 */
++			otx2_mbox_msg_send(mbox, 0);
++			rc = otx2_mbox_wait_for_rsp(mbox, 0);
++			if (rc < 0)
++				return rc;
++
++			req = otx2_mbox_alloc_msg_nix_aq_enq(mbox);
++			if (!req)
++				return -ENOMEM;
++		}
++		req->rss.rq = ind_tbl[idx];
++		/* Fill AQ info */
++		req->qidx = (group * rss->rss_size) + idx;
++		req->ctype = NIX_AQ_CTYPE_RSS;
++		req->op = NIX_AQ_INSTOP_INIT;
++	}
++
++	otx2_mbox_msg_send(mbox, 0);
++	rc = otx2_mbox_wait_for_rsp(mbox, 0);
++	if (rc < 0)
++		return rc;
++
++	return 0;
++}
++
++int
++otx2_nix_dev_reta_update(struct rte_eth_dev *eth_dev,
++			 struct rte_eth_rss_reta_entry64 *reta_conf,
++			 uint16_t reta_size)
++{
++	struct otx2_eth_dev *dev = otx2_eth_pmd_priv(eth_dev);
++	struct otx2_rss_info *rss = &dev->rss_info;
++	int rc, i, j;
++	int idx = 0;
++
++	rc = -EINVAL;
++	if (reta_size != dev->rss_info.rss_size) {
++		otx2_err("Size of hash lookup table configured "
++		"(%d) doesn't match the number hardware can supported "
++		"(%d)", reta_size, dev->rss_info.rss_size);
++		goto fail;
++	}
++
++	/* Copy RETA table */
++	for (i = 0; i < (dev->rss_info.rss_size / RTE_RETA_GROUP_SIZE); i++) {
++		for (j = 0; j < RTE_RETA_GROUP_SIZE; j++) {
++			if ((reta_conf[i].mask >> j) & 0x01)
++				rss->ind_tbl[idx] = reta_conf[i].reta[j];
++			idx++;
++		}
++	}
++
++	return otx2_nix_rss_tbl_init(dev, 0, dev->rss_info.ind_tbl);
++
++fail:
++	return rc;
++}
++
++int
++otx2_nix_dev_reta_query(struct rte_eth_dev *eth_dev,
++			struct rte_eth_rss_reta_entry64 *reta_conf,
++			uint16_t reta_size)
++{
++	struct otx2_eth_dev *dev = otx2_eth_pmd_priv(eth_dev);
++	struct otx2_rss_info *rss = &dev->rss_info;
++	int rc, i, j;
++
++	rc = -EINVAL;
++
++	if (reta_size != dev->rss_info.rss_size) {
++		otx2_err("Size of hash lookup table configured "
++			"(%d) doesn't match the number hardware can supported "
++			"(%d)", reta_size, dev->rss_info.rss_size);
++		goto fail;
++	}
++
++	/* Copy RETA table */
++	for (i = 0; i < (dev->rss_info.rss_size / RTE_RETA_GROUP_SIZE); i++) {
++		for (j = 0; j < RTE_RETA_GROUP_SIZE; j++)
++			if ((reta_conf[i].mask >> j) & 0x01)
++				reta_conf[i].reta[j] = rss->ind_tbl[j];
++	}
++
++	return 0;
++
++fail:
++	return rc;
++}
++
++void
++otx2_nix_rss_set_key(struct otx2_eth_dev *dev, uint8_t *key,
++		     uint32_t key_len)
++{
++	const uint8_t default_key[NIX_HASH_KEY_SIZE] = {
++		0xFE, 0xED, 0x0B, 0xAD, 0xFE, 0xED, 0x0B, 0xAD,
++		0xFE, 0xED, 0x0B, 0xAD, 0xFE, 0xED, 0x0B, 0xAD,
++		0xFE, 0xED, 0x0B, 0xAD, 0xFE, 0xED, 0x0B, 0xAD,
++		0xFE, 0xED, 0x0B, 0xAD, 0xFE, 0xED, 0x0B, 0xAD,
++		0xFE, 0xED, 0x0B, 0xAD, 0xFE, 0xED, 0x0B, 0xAD,
++		0xFE, 0xED, 0x0B, 0xAD, 0xFE, 0xED, 0x0B, 0xAD
++	};
++	struct otx2_rss_info *rss = &dev->rss_info;
++	uint64_t *keyptr;
++	uint64_t val;
++	uint32_t idx;
++
++	if (key == NULL || key == 0) {
++		keyptr = (uint64_t *)(uintptr_t)default_key;
++		key_len = NIX_HASH_KEY_SIZE;
++		memset(rss->key, 0, key_len);
++	} else {
++		memcpy(rss->key, key, key_len);
++		keyptr = (uint64_t *)rss->key;
++	}
++
++	for (idx = 0; idx < (key_len >> 3); idx++) {
++		val = rte_cpu_to_be_64(*keyptr);
++		otx2_write64(val, dev->base + NIX_LF_RX_SECRETX(idx));
++		keyptr++;
++	}
++}
++
++static void
++rss_get_key(struct otx2_eth_dev *dev, uint8_t *key)
++{
++	uint64_t *keyptr = (uint64_t *)key;
++	uint64_t val;
++	int idx;
++
++	for (idx = 0; idx < (NIX_HASH_KEY_SIZE >> 3); idx++) {
++		val = otx2_read64(dev->base + NIX_LF_RX_SECRETX(idx));
++		*keyptr = rte_be_to_cpu_64(val);
++		keyptr++;
++	}
++}
++
++#define RSS_IPV4_ENABLE ( \
++			  ETH_RSS_IPV4 | \
++			  ETH_RSS_FRAG_IPV4 | \
++			  ETH_RSS_NONFRAG_IPV4_UDP | \
++			  ETH_RSS_NONFRAG_IPV4_TCP | \
++			  ETH_RSS_NONFRAG_IPV4_SCTP)
++
++#define RSS_IPV6_ENABLE ( \
++			  ETH_RSS_IPV6 | \
++			  ETH_RSS_FRAG_IPV6 | \
++			  ETH_RSS_NONFRAG_IPV6_UDP | \
++			  ETH_RSS_NONFRAG_IPV6_TCP | \
++			  ETH_RSS_NONFRAG_IPV6_SCTP)
++
++#define RSS_IPV6_EX_ENABLE ( \
++			     ETH_RSS_IPV6_EX | \
++			     ETH_RSS_IPV6_TCP_EX | \
++			     ETH_RSS_IPV6_UDP_EX)
++
++#define RSS_MAX_LEVELS   3
++
++#define RSS_IPV4_INDEX   0
++#define RSS_IPV6_INDEX   1
++#define RSS_TCP_INDEX    2
++#define RSS_UDP_INDEX    3
++#define RSS_SCTP_INDEX   4
++#define RSS_DMAC_INDEX   5
++
++uint32_t
++otx2_rss_ethdev_to_nix(struct otx2_eth_dev *dev, uint64_t ethdev_rss,
++		       uint8_t rss_level)
++{
++	uint32_t flow_key_type[RSS_MAX_LEVELS][6] = {
++		{
++			FLOW_KEY_TYPE_IPV4, FLOW_KEY_TYPE_IPV6,
++			FLOW_KEY_TYPE_TCP, FLOW_KEY_TYPE_UDP,
++			FLOW_KEY_TYPE_SCTP, FLOW_KEY_TYPE_ETH_DMAC
++		},
++		{
++			FLOW_KEY_TYPE_INNR_IPV4, FLOW_KEY_TYPE_INNR_IPV6,
++			FLOW_KEY_TYPE_INNR_TCP, FLOW_KEY_TYPE_INNR_UDP,
++			FLOW_KEY_TYPE_INNR_SCTP, FLOW_KEY_TYPE_INNR_ETH_DMAC
++		},
++		{
++			FLOW_KEY_TYPE_IPV4 | FLOW_KEY_TYPE_INNR_IPV4,
++			FLOW_KEY_TYPE_IPV6 | FLOW_KEY_TYPE_INNR_IPV6,
++			FLOW_KEY_TYPE_TCP | FLOW_KEY_TYPE_INNR_TCP,
++			FLOW_KEY_TYPE_UDP | FLOW_KEY_TYPE_INNR_UDP,
++			FLOW_KEY_TYPE_SCTP | FLOW_KEY_TYPE_INNR_SCTP,
++			FLOW_KEY_TYPE_ETH_DMAC | FLOW_KEY_TYPE_INNR_ETH_DMAC
++		}
++	};
++	uint32_t flowkey_cfg = 0;
++
++	dev->rss_info.nix_rss = ethdev_rss;
++
++	if (ethdev_rss & RSS_IPV4_ENABLE)
++		flowkey_cfg |= flow_key_type[rss_level][RSS_IPV4_INDEX];
++
++	if (ethdev_rss & RSS_IPV6_ENABLE)
++		flowkey_cfg |= flow_key_type[rss_level][RSS_IPV6_INDEX];
++
++	if (ethdev_rss & ETH_RSS_TCP)
++		flowkey_cfg |= flow_key_type[rss_level][RSS_TCP_INDEX];
++
++	if (ethdev_rss & ETH_RSS_UDP)
++		flowkey_cfg |= flow_key_type[rss_level][RSS_UDP_INDEX];
++
++	if (ethdev_rss & ETH_RSS_SCTP)
++		flowkey_cfg |= flow_key_type[rss_level][RSS_SCTP_INDEX];
++
++	if (ethdev_rss & ETH_RSS_L2_PAYLOAD)
++		flowkey_cfg |= flow_key_type[rss_level][RSS_DMAC_INDEX];
++
++	if (ethdev_rss & RSS_IPV6_EX_ENABLE)
++		flowkey_cfg |= FLOW_KEY_TYPE_IPV6_EXT;
++
++	if (ethdev_rss & ETH_RSS_PORT)
++		flowkey_cfg |= FLOW_KEY_TYPE_PORT;
++
++	if (ethdev_rss & ETH_RSS_NVGRE)
++		flowkey_cfg |= FLOW_KEY_TYPE_NVGRE;
++
++	if (ethdev_rss & ETH_RSS_VXLAN)
++		flowkey_cfg |= FLOW_KEY_TYPE_VXLAN;
++
++	if (ethdev_rss & ETH_RSS_GENEVE)
++		flowkey_cfg |= FLOW_KEY_TYPE_GENEVE;
++
++	return flowkey_cfg;
++}
++
++int
++otx2_rss_set_hf(struct otx2_eth_dev *dev, uint32_t flowkey_cfg,
++		uint8_t *alg_idx, uint8_t group, int mcam_index)
++{
++	struct nix_rss_flowkey_cfg_rsp *rss_rsp;
++	struct otx2_mbox *mbox = dev->mbox;
++	struct nix_rss_flowkey_cfg *cfg;
++	int rc;
++
++	rc = -EINVAL;
++
++	dev->rss_info.flowkey_cfg = flowkey_cfg;
++
++	cfg = otx2_mbox_alloc_msg_nix_rss_flowkey_cfg(mbox);
++
++	cfg->flowkey_cfg = flowkey_cfg;
++	cfg->mcam_index = mcam_index; /* -1 indicates default group */
++	cfg->group = group; /* 0 is default group */
++
++	rc = otx2_mbox_process_msg(mbox, (void *)&rss_rsp);
++	if (rc)
++		return rc;
++
++	if (alg_idx)
++		*alg_idx = rss_rsp->alg_idx;
++
++	return rc;
++}
++
++int
++otx2_nix_rss_hash_update(struct rte_eth_dev *eth_dev,
++			 struct rte_eth_rss_conf *rss_conf)
++{
++	struct otx2_eth_dev *dev = otx2_eth_pmd_priv(eth_dev);
++	uint32_t flowkey_cfg;
++	uint8_t alg_idx;
++	int rc;
++
++	rc = -EINVAL;
++
++	if (rss_conf->rss_key && rss_conf->rss_key_len != NIX_HASH_KEY_SIZE) {
++		otx2_err("Hash key size mismatch %d vs %d",
++			 rss_conf->rss_key_len, NIX_HASH_KEY_SIZE);
++		goto fail;
++	}
++
++	if (rss_conf->rss_key)
++		otx2_nix_rss_set_key(dev, rss_conf->rss_key,
++				     (uint32_t)rss_conf->rss_key_len);
++
++	flowkey_cfg = otx2_rss_ethdev_to_nix(dev, rss_conf->rss_hf, 0);
++
++	rc = otx2_rss_set_hf(dev, flowkey_cfg, &alg_idx,
++			     NIX_DEFAULT_RSS_CTX_GROUP,
++			     NIX_DEFAULT_RSS_MCAM_IDX);
++	if (rc) {
++		otx2_err("Failed to set RSS hash function rc=%d", rc);
++		return rc;
++	}
++
++	dev->rss_info.alg_idx = alg_idx;
++
++fail:
++	return rc;
++}
++
++int
++otx2_nix_rss_hash_conf_get(struct rte_eth_dev *eth_dev,
++			   struct rte_eth_rss_conf *rss_conf)
++{
++	struct otx2_eth_dev *dev = otx2_eth_pmd_priv(eth_dev);
++
++	if (rss_conf->rss_key)
++		rss_get_key(dev, rss_conf->rss_key);
++
++	rss_conf->rss_key_len = NIX_HASH_KEY_SIZE;
++	rss_conf->rss_hf = dev->rss_info.nix_rss;
++
++	return 0;
++}
++
++int
++otx2_nix_rss_config(struct rte_eth_dev *eth_dev)
++{
++	struct otx2_eth_dev *dev = otx2_eth_pmd_priv(eth_dev);
++	uint32_t idx, qcnt = eth_dev->data->nb_rx_queues;
++	uint32_t flowkey_cfg;
++	uint64_t rss_hf;
++	uint8_t alg_idx;
++	int rc;
++
++	/* Skip further configuration if selected mode is not RSS */
++	if (eth_dev->data->dev_conf.rxmode.mq_mode != ETH_MQ_RX_RSS)
++		return 0;
++
++	/* Update default RSS key and cfg */
++	otx2_nix_rss_set_key(dev, NULL, 0);
++
++	/* Update default RSS RETA */
++	for (idx = 0; idx < dev->rss_info.rss_size; idx++)
++		dev->rss_info.ind_tbl[idx] = idx % qcnt;
++
++	/* Init RSS table context */
++	rc = otx2_nix_rss_tbl_init(dev, 0, dev->rss_info.ind_tbl);
++	if (rc) {
++		otx2_err("Failed to init RSS table rc=%d", rc);
++		return rc;
++	}
++
++	rss_hf = eth_dev->data->dev_conf.rx_adv_conf.rss_conf.rss_hf;
++	flowkey_cfg = otx2_rss_ethdev_to_nix(dev, rss_hf, 0);
++
++	rc = otx2_rss_set_hf(dev, flowkey_cfg, &alg_idx,
++			     NIX_DEFAULT_RSS_CTX_GROUP,
++			     NIX_DEFAULT_RSS_MCAM_IDX);
++	if (rc) {
++		otx2_err("Failed to set RSS hash function rc=%d", rc);
++		return rc;
++	}
++
++	dev->rss_info.alg_idx = alg_idx;
++
++	return 0;
++}
+-- 
+2.14.4
+

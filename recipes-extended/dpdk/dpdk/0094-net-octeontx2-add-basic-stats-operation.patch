@@ -1,0 +1,280 @@
+From 3dbaa794b60f6be127bfaeb59fce0eff3bc697ca Mon Sep 17 00:00:00 2001
+From: Kiran Kumar K <kirankumark@marvell.com>
+Date: Wed, 29 May 2019 14:29:29 +0530
+Subject: [PATCH 094/154] net/octeontx2: add basic stats operation
+
+Add basic stat operation and updated the feature list.
+
+Signed-off-by: Kiran Kumar K <kirankumark@marvell.com>
+Signed-off-by: Vamsi Attunuru <vattunuru@marvell.com>
+---
+ doc/guides/nics/features/octeontx2.ini     |   2 +
+ doc/guides/nics/features/octeontx2_vec.ini |   2 +
+ doc/guides/nics/features/octeontx2_vf.ini  |   2 +
+ doc/guides/nics/octeontx2.rst              |   1 +
+ drivers/net/octeontx2/Makefile             |   1 +
+ drivers/net/octeontx2/meson.build          |   1 +
+ drivers/net/octeontx2/otx2_ethdev.c        |   3 +
+ drivers/net/octeontx2/otx2_ethdev.h        |  17 +++++
+ drivers/net/octeontx2/otx2_stats.c         | 117 +++++++++++++++++++++++++++++
+ 9 files changed, 146 insertions(+)
+ create mode 100644 drivers/net/octeontx2/otx2_stats.c
+
+diff --git a/doc/guides/nics/features/octeontx2.ini b/doc/guides/nics/features/octeontx2.ini
+index 828351409ebf..55710701653a 100644
+--- a/doc/guides/nics/features/octeontx2.ini
++++ b/doc/guides/nics/features/octeontx2.ini
+@@ -10,6 +10,8 @@ SR-IOV               = Y
+ Multiprocess aware   = Y
+ Link status          = Y
+ Link status event    = Y
++Basic stats          = Y
++Stats per queue      = Y
+ Registers dump       = Y
+ Linux VFIO           = Y
+ ARMv8                = Y
+diff --git a/doc/guides/nics/features/octeontx2_vec.ini b/doc/guides/nics/features/octeontx2_vec.ini
+index 719692dc6854..3a2b78e060c1 100644
+--- a/doc/guides/nics/features/octeontx2_vec.ini
++++ b/doc/guides/nics/features/octeontx2_vec.ini
+@@ -10,6 +10,8 @@ SR-IOV               = Y
+ Multiprocess aware   = Y
+ Link status          = Y
+ Link status event    = Y
++Basic stats          = Y
++Stats per queue      = Y
+ Registers dump       = Y
+ Linux VFIO           = Y
+ ARMv8                = Y
+diff --git a/doc/guides/nics/features/octeontx2_vf.ini b/doc/guides/nics/features/octeontx2_vf.ini
+index 4d5667583f64..499f66c5c0e1 100644
+--- a/doc/guides/nics/features/octeontx2_vf.ini
++++ b/doc/guides/nics/features/octeontx2_vf.ini
+@@ -9,6 +9,8 @@ Lock-free Tx queue   = Y
+ Multiprocess aware   = Y
+ Link status          = Y
+ Link status event    = Y
++Basic stats          = Y
++Stats per queue      = Y
+ Registers dump       = Y
+ Linux VFIO           = Y
+ ARMv8                = Y
+diff --git a/doc/guides/nics/octeontx2.rst b/doc/guides/nics/octeontx2.rst
+index a163f912822b..2944bbb99ad4 100644
+--- a/doc/guides/nics/octeontx2.rst
++++ b/doc/guides/nics/octeontx2.rst
+@@ -18,6 +18,7 @@ Features of the OCTEON TX2 Ethdev PMD are:
+ 
+ - SR-IOV VF
+ - Lock-free Tx queue
++- Port hardware statistics
+ - Link state information
+ - Debug utilities - Context dump and error interrupt support
+ 
+diff --git a/drivers/net/octeontx2/Makefile b/drivers/net/octeontx2/Makefile
+index 9d482d72de6f..e49c526bb562 100644
+--- a/drivers/net/octeontx2/Makefile
++++ b/drivers/net/octeontx2/Makefile
+@@ -33,6 +33,7 @@ LIBABIVER := 1
+ SRCS-$(CONFIG_RTE_LIBRTE_OCTEONTX2_PMD) += \
+ 	otx2_mac.c	\
+ 	otx2_link.c	\
++	otx2_stats.c	\
+ 	otx2_ethdev.c	\
+ 	otx2_ethdev_irq.c \
+ 	otx2_ethdev_ops.c \
+diff --git a/drivers/net/octeontx2/meson.build b/drivers/net/octeontx2/meson.build
+index d693386b923c..1c57b1bb44e5 100644
+--- a/drivers/net/octeontx2/meson.build
++++ b/drivers/net/octeontx2/meson.build
+@@ -5,6 +5,7 @@
+ sources = files(
+ 		'otx2_mac.c',
+ 		'otx2_link.c',
++		'otx2_stats.c',
+ 		'otx2_ethdev.c',
+ 		'otx2_ethdev_irq.c',
+ 		'otx2_ethdev_ops.c',
+diff --git a/drivers/net/octeontx2/otx2_ethdev.c b/drivers/net/octeontx2/otx2_ethdev.c
+index cb4f6ebb977c..5787029d9e18 100644
+--- a/drivers/net/octeontx2/otx2_ethdev.c
++++ b/drivers/net/octeontx2/otx2_ethdev.c
+@@ -234,7 +234,10 @@ static const struct eth_dev_ops otx2_eth_dev_ops = {
+ 	.dev_infos_get            = otx2_nix_info_get,
+ 	.dev_configure            = otx2_nix_configure,
+ 	.link_update              = otx2_nix_link_update,
++	.stats_get                = otx2_nix_dev_stats_get,
++	.stats_reset              = otx2_nix_dev_stats_reset,
+ 	.get_reg                  = otx2_nix_dev_get_reg,
++	.queue_stats_mapping_set  = otx2_nix_queue_stats_mapping,
+ };
+ 
+ static inline int
+diff --git a/drivers/net/octeontx2/otx2_ethdev.h b/drivers/net/octeontx2/otx2_ethdev.h
+index d8490337da1f..1cd9893a65d4 100644
+--- a/drivers/net/octeontx2/otx2_ethdev.h
++++ b/drivers/net/octeontx2/otx2_ethdev.h
+@@ -77,6 +77,12 @@
+ #define NIX_TX_NB_SEG_MAX		9
+ #endif
+ 
++#define CQ_OP_STAT_OP_ERR	63
++#define CQ_OP_STAT_CQ_ERR	46
++
++#define OP_ERR			BIT_ULL(CQ_OP_STAT_OP_ERR)
++#define CQ_ERR			BIT_ULL(CQ_OP_STAT_CQ_ERR)
++
+ #define NIX_RSS_OFFLOAD		(ETH_RSS_PORT | ETH_RSS_IP | ETH_RSS_UDP |\
+ 				 ETH_RSS_TCP | ETH_RSS_SCTP | \
+ 				 ETH_RSS_TUNNEL | ETH_RSS_L2_PAYLOAD)
+@@ -156,6 +162,8 @@ struct otx2_eth_dev {
+ 	uint64_t tx_offload_capa;
+ 	struct otx2_qint qints_mem[RTE_MAX_QUEUES_PER_PORT];
+ 	struct otx2_rss_info rss_info;
++	uint32_t txmap[RTE_ETHDEV_QUEUE_STAT_CNTRS];
++	uint32_t rxmap[RTE_ETHDEV_QUEUE_STAT_CNTRS];
+ 	struct otx2_npc_flow_info npc_flow;
+ 	struct rte_eth_dev *eth_dev;
+ } __rte_cache_aligned;
+@@ -189,6 +197,15 @@ int otx2_nix_dev_get_reg(struct rte_eth_dev *eth_dev,
+ int otx2_nix_queues_ctx_dump(struct rte_eth_dev *eth_dev);
+ void otx2_nix_cqe_dump(const struct nix_cqe_hdr_s *cq);
+ 
++/* Stats */
++int otx2_nix_dev_stats_get(struct rte_eth_dev *eth_dev,
++			   struct rte_eth_stats *stats);
++void otx2_nix_dev_stats_reset(struct rte_eth_dev *eth_dev);
++
++int otx2_nix_queue_stats_mapping(struct rte_eth_dev *dev,
++				 uint16_t queue_id, uint8_t stat_idx,
++				 uint8_t is_rx);
++
+ /* CGX */
+ int otx2_cgx_rxtx_start(struct otx2_eth_dev *dev);
+ int otx2_cgx_rxtx_stop(struct otx2_eth_dev *dev);
+diff --git a/drivers/net/octeontx2/otx2_stats.c b/drivers/net/octeontx2/otx2_stats.c
+new file mode 100644
+index 000000000000..cba1228d3067
+--- /dev/null
++++ b/drivers/net/octeontx2/otx2_stats.c
+@@ -0,0 +1,117 @@
++/* SPDX-License-Identifier: BSD-3-Clause
++ * Copyright(C) 2019 Marvell International Ltd.
++ */
++
++#include <inttypes.h>
++
++#include "otx2_ethdev.h"
++
++int
++otx2_nix_dev_stats_get(struct rte_eth_dev *eth_dev,
++		       struct rte_eth_stats *stats)
++{
++	struct otx2_eth_dev *dev = otx2_eth_pmd_priv(eth_dev);
++	uint64_t reg, val;
++	uint32_t qidx, i;
++	int64_t *addr;
++
++	stats->opackets = otx2_read64(dev->base +
++			NIX_LF_TX_STATX(NIX_STAT_LF_TX_TX_UCAST));
++	stats->opackets += otx2_read64(dev->base +
++			NIX_LF_TX_STATX(NIX_STAT_LF_TX_TX_MCAST));
++	stats->opackets += otx2_read64(dev->base +
++			NIX_LF_TX_STATX(NIX_STAT_LF_TX_TX_BCAST));
++	stats->oerrors = otx2_read64(dev->base +
++			NIX_LF_TX_STATX(NIX_STAT_LF_TX_TX_DROP));
++	stats->obytes = otx2_read64(dev->base +
++			NIX_LF_TX_STATX(NIX_STAT_LF_TX_TX_OCTS));
++
++	stats->ipackets = otx2_read64(dev->base +
++			NIX_LF_RX_STATX(NIX_STAT_LF_RX_RX_UCAST));
++	stats->ipackets += otx2_read64(dev->base +
++			NIX_LF_RX_STATX(NIX_STAT_LF_RX_RX_MCAST));
++	stats->ipackets += otx2_read64(dev->base +
++			NIX_LF_RX_STATX(NIX_STAT_LF_RX_RX_BCAST));
++	stats->imissed = otx2_read64(dev->base +
++			NIX_LF_RX_STATX(NIX_STAT_LF_RX_RX_DROP));
++	stats->ibytes = otx2_read64(dev->base +
++			NIX_LF_RX_STATX(NIX_STAT_LF_RX_RX_OCTS));
++	stats->ierrors = otx2_read64(dev->base +
++			NIX_LF_RX_STATX(NIX_STAT_LF_RX_RX_ERR));
++
++	for (i = 0; i < RTE_ETHDEV_QUEUE_STAT_CNTRS; i++) {
++		if (dev->txmap[i] & (1U << 31)) {
++			qidx = dev->txmap[i] & 0xFFFF;
++			reg = (((uint64_t)qidx) << 32);
++
++			addr = (int64_t *)(dev->base + NIX_LF_SQ_OP_PKTS);
++			val = otx2_atomic64_add_nosync(reg, addr);
++			if (val & OP_ERR)
++				val = 0;
++			stats->q_opackets[i] = val;
++
++			addr = (int64_t *)(dev->base + NIX_LF_SQ_OP_OCTS);
++			val = otx2_atomic64_add_nosync(reg, addr);
++			if (val & OP_ERR)
++				val = 0;
++			stats->q_obytes[i] = val;
++
++			addr = (int64_t *)(dev->base + NIX_LF_SQ_OP_DROP_PKTS);
++			val = otx2_atomic64_add_nosync(reg, addr);
++			if (val & OP_ERR)
++				val = 0;
++			stats->q_errors[i] = val;
++		}
++	}
++
++	for (i = 0; i < RTE_ETHDEV_QUEUE_STAT_CNTRS; i++) {
++		if (dev->rxmap[i] & (1U << 31)) {
++			qidx = dev->rxmap[i] & 0xFFFF;
++			reg = (((uint64_t)qidx) << 32);
++
++			addr = (int64_t *)(dev->base + NIX_LF_RQ_OP_PKTS);
++			val = otx2_atomic64_add_nosync(reg, addr);
++			if (val & OP_ERR)
++				val = 0;
++			stats->q_ipackets[i] = val;
++
++			addr = (int64_t *)(dev->base + NIX_LF_RQ_OP_OCTS);
++			val = otx2_atomic64_add_nosync(reg, addr);
++			if (val & OP_ERR)
++				val = 0;
++			stats->q_ibytes[i] = val;
++
++			addr = (int64_t *)(dev->base + NIX_LF_RQ_OP_DROP_PKTS);
++			val = otx2_atomic64_add_nosync(reg, addr);
++			if (val & OP_ERR)
++				val = 0;
++			stats->q_errors[i] += val;
++		}
++	}
++
++	return 0;
++}
++
++void
++otx2_nix_dev_stats_reset(struct rte_eth_dev *eth_dev)
++{
++	struct otx2_eth_dev *dev = otx2_eth_pmd_priv(eth_dev);
++	struct otx2_mbox *mbox = dev->mbox;
++
++	otx2_mbox_alloc_msg_nix_stats_rst(mbox);
++	otx2_mbox_process(mbox);
++}
++
++int
++otx2_nix_queue_stats_mapping(struct rte_eth_dev *eth_dev, uint16_t queue_id,
++			     uint8_t stat_idx, uint8_t is_rx)
++{
++	struct otx2_eth_dev *dev = otx2_eth_pmd_priv(eth_dev);
++
++	if (is_rx)
++		dev->rxmap[stat_idx] = ((1U << 31) | queue_id);
++	else
++		dev->txmap[stat_idx] = ((1U << 31) | queue_id);
++
++	return 0;
++}
+-- 
+2.14.4
+

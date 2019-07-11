@@ -1,0 +1,196 @@
+From a19c6cf08bbf738a8144dcea0ef4b88c25a4d723 Mon Sep 17 00:00:00 2001
+From: Pavan Nikhilesh <pbhagavatula@marvell.com>
+Date: Fri, 28 Jun 2019 23:53:13 +0530
+Subject: [PATCH 032/154] event/octeontx2: add init and fini for SSO object
+
+SSO object needs to be initialized to communicate with the kernel AF
+driver through mbox using the common API's.
+Also, initialize the internal eventdev structure to defaults.
+Attach NPA lf to the PF if needed.
+
+Signed-off-by: Jerin Jacob <jerinj@marvell.com>
+Signed-off-by: Pavan Nikhilesh <pbhagavatula@marvell.com>
+Signed-off-by: Nithin Dabilpuram <ndabilpuram@marvell.com>
+Acked-by: Jerin Jacob <jerinj@marvell.com>
+---
+ drivers/event/octeontx2/Makefile     |  2 +-
+ drivers/event/octeontx2/meson.build  |  2 +-
+ drivers/event/octeontx2/otx2_evdev.c | 84 +++++++++++++++++++++++++++++++++++-
+ drivers/event/octeontx2/otx2_evdev.h | 22 +++++++++-
+ 4 files changed, 105 insertions(+), 5 deletions(-)
+
+diff --git a/drivers/event/octeontx2/Makefile b/drivers/event/octeontx2/Makefile
+index a81da7296267..7937f955851b 100644
+--- a/drivers/event/octeontx2/Makefile
++++ b/drivers/event/octeontx2/Makefile
+@@ -37,6 +37,6 @@ SRCS-$(CONFIG_RTE_LIBRTE_PMD_OCTEONTX2_EVENTDEV) += otx2_evdev.c
+ 
+ LDLIBS += -lrte_eal -lrte_bus_pci -lrte_pci
+ LDLIBS += -lrte_eventdev
+-LDLIBS += -lrte_common_octeontx2
++LDLIBS += -lrte_common_octeontx2 -lrte_mempool_octeontx2
+ 
+ include $(RTE_SDK)/mk/rte.lib.mk
+diff --git a/drivers/event/octeontx2/meson.build b/drivers/event/octeontx2/meson.build
+index c4f4421749d8..3fc96421dc8c 100644
+--- a/drivers/event/octeontx2/meson.build
++++ b/drivers/event/octeontx2/meson.build
+@@ -18,4 +18,4 @@ foreach flag: extra_flags
+ 	endif
+ endforeach
+ 
+-deps += ['bus_pci', 'common_octeontx2']
++deps += ['bus_pci', 'common_octeontx2', 'mempool_octeontx2']
+diff --git a/drivers/event/octeontx2/otx2_evdev.c b/drivers/event/octeontx2/otx2_evdev.c
+index faffd3f0c651..08ae820b9a76 100644
+--- a/drivers/event/octeontx2/otx2_evdev.c
++++ b/drivers/event/octeontx2/otx2_evdev.c
+@@ -46,22 +46,102 @@ static struct rte_pci_driver pci_sso = {
+ int
+ otx2_sso_init(struct rte_eventdev *event_dev)
+ {
+-	RTE_SET_USED(event_dev);
++	struct free_rsrcs_rsp *rsrc_cnt;
++	struct rte_pci_device *pci_dev;
++	struct otx2_sso_evdev *dev;
++	int rc;
++
+ 	/* For secondary processes, the primary has done all the work */
+ 	if (rte_eal_process_type() != RTE_PROC_PRIMARY)
+ 		return 0;
+ 
++	dev = sso_pmd_priv(event_dev);
++
++	pci_dev = container_of(event_dev->dev, struct rte_pci_device, device);
++
++	/* Initialize the base otx2_dev object */
++	rc = otx2_dev_init(pci_dev, dev);
++	if (rc < 0) {
++		otx2_err("Failed to initialize otx2_dev rc=%d", rc);
++		goto error;
++	}
++
++	/* Get SSO and SSOW MSIX rsrc cnt */
++	otx2_mbox_alloc_msg_free_rsrc_cnt(dev->mbox);
++	rc = otx2_mbox_process_msg(dev->mbox, (void *)&rsrc_cnt);
++	if (rc < 0) {
++		otx2_err("Unable to get free rsrc count");
++		goto otx2_dev_uninit;
++	}
++	otx2_sso_dbg("SSO %d SSOW %d NPA %d provisioned", rsrc_cnt->sso,
++		     rsrc_cnt->ssow, rsrc_cnt->npa);
++
++	dev->max_event_ports = RTE_MIN(rsrc_cnt->ssow, OTX2_SSO_MAX_VHWS);
++	dev->max_event_queues = RTE_MIN(rsrc_cnt->sso, OTX2_SSO_MAX_VHGRP);
++	/* Grab the NPA LF if required */
++	rc = otx2_npa_lf_init(pci_dev, dev);
++	if (rc < 0) {
++		otx2_err("Unable to init NPA lf. It might not be provisioned");
++		goto otx2_dev_uninit;
++	}
++
++	dev->drv_inited = true;
++	dev->is_timeout_deq = 0;
++	dev->min_dequeue_timeout_ns = USEC2NSEC(1);
++	dev->max_dequeue_timeout_ns = USEC2NSEC(0x3FF);
++	dev->max_num_events = -1;
++	dev->nb_event_queues = 0;
++	dev->nb_event_ports = 0;
++
++	if (!dev->max_event_ports || !dev->max_event_queues) {
++		otx2_err("Not enough eventdev resource queues=%d ports=%d",
++			 dev->max_event_queues, dev->max_event_ports);
++		rc = -ENODEV;
++		goto otx2_npa_lf_uninit;
++	}
++
++	otx2_sso_pf_func_set(dev->pf_func);
++	otx2_sso_dbg("Initializing %s max_queues=%d max_ports=%d",
++		     event_dev->data->name, dev->max_event_queues,
++		     dev->max_event_ports);
++
++
+ 	return 0;
++
++otx2_npa_lf_uninit:
++	otx2_npa_lf_fini();
++otx2_dev_uninit:
++	otx2_dev_fini(pci_dev, dev);
++error:
++	return rc;
+ }
+ 
+ int
+ otx2_sso_fini(struct rte_eventdev *event_dev)
+ {
+-	RTE_SET_USED(event_dev);
++	struct otx2_sso_evdev *dev = sso_pmd_priv(event_dev);
++	struct rte_pci_device *pci_dev;
++
+ 	/* For secondary processes, nothing to be done */
+ 	if (rte_eal_process_type() != RTE_PROC_PRIMARY)
+ 		return 0;
+ 
++	pci_dev = container_of(event_dev->dev, struct rte_pci_device, device);
++
++	if (!dev->drv_inited)
++		goto dev_fini;
++
++	dev->drv_inited = false;
++	otx2_npa_lf_fini();
++
++dev_fini:
++	if (otx2_npa_lf_active(dev)) {
++		otx2_info("Common resource in use by other devices");
++		return -EAGAIN;
++	}
++
++	otx2_dev_fini(pci_dev, dev);
++
+ 	return 0;
+ }
+ 
+diff --git a/drivers/event/octeontx2/otx2_evdev.h b/drivers/event/octeontx2/otx2_evdev.h
+index 1df2332930f8..4427efcad15c 100644
+--- a/drivers/event/octeontx2/otx2_evdev.h
++++ b/drivers/event/octeontx2/otx2_evdev.h
+@@ -8,6 +8,8 @@
+ #include <rte_eventdev.h>
+ 
+ #include "otx2_common.h"
++#include "otx2_dev.h"
++#include "otx2_mempool.h"
+ 
+ #define EVENTDEV_NAME_OCTEONTX2_PMD otx2_eventdev
+ 
+@@ -16,8 +18,26 @@
+ #define OTX2_SSO_MAX_VHGRP                  RTE_EVENT_MAX_QUEUES_PER_DEV
+ #define OTX2_SSO_MAX_VHWS                   (UINT8_MAX)
+ 
++#define USEC2NSEC(__us)                 ((__us) * 1E3)
++
+ struct otx2_sso_evdev {
+-};
++	OTX2_DEV; /* Base class */
++	uint8_t max_event_queues;
++	uint8_t max_event_ports;
++	uint8_t is_timeout_deq;
++	uint8_t nb_event_queues;
++	uint8_t nb_event_ports;
++	uint32_t deq_tmo_ns;
++	uint32_t min_dequeue_timeout_ns;
++	uint32_t max_dequeue_timeout_ns;
++	int32_t max_num_events;
++} __rte_cache_aligned;
++
++static inline struct otx2_sso_evdev *
++sso_pmd_priv(const struct rte_eventdev *event_dev)
++{
++	return event_dev->data->dev_private;
++}
+ 
+ /* Init and Fini API's */
+ int otx2_sso_init(struct rte_eventdev *event_dev);
+-- 
+2.14.4
+

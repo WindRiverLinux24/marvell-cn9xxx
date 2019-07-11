@@ -1,0 +1,227 @@
+From a2e3d1ae357e20f95538e1c462d954d5748d59ec Mon Sep 17 00:00:00 2001
+From: Pavan Nikhilesh <pbhagavatula@marvell.com>
+Date: Fri, 28 Jun 2019 23:53:34 +0530
+Subject: [PATCH 053/154] event/octeontx2: add devargs to control SSO GGRP QoS
+
+SSO GGRPs i.e. queue uses DRAM & SRAM buffers to hold in-flight
+events. By default the buffers are assigned to the SSO GGRPs to
+satisfy minimum HW requirements. SSO is free to assign the remaining
+buffers to GGRPs based on a preconfigured threshold.
+We can control the QoS of SSO GGRP by modifying the above mentioned
+thresholds. GGRPs that have higher importance can be assigned higher
+thresholds than the rest.
+
+Example:
+	--dev "0002:0e:00.0,qos=[1-50-50-50]" // [Qx-XAQ-TAQ-IAQ]
+
+Qx  -> Event queue Aka SSO GGRP.
+XAQ -> DRAM In-flights.
+TAQ & IAQ -> SRAM In-flights.
+
+The values need to be expressed in terms of percentages, 0 represents
+default.
+
+Signed-off-by: Pavan Nikhilesh <pbhagavatula@marvell.com>
+Signed-off-by: Jerin Jacob <jerinj@marvell.com>
+---
+ doc/guides/eventdevs/octeontx2.rst   |  15 +++++
+ drivers/event/octeontx2/otx2_evdev.c | 104 ++++++++++++++++++++++++++++++++++-
+ drivers/event/octeontx2/otx2_evdev.h |   9 +++
+ 3 files changed, 127 insertions(+), 1 deletion(-)
+
+diff --git a/doc/guides/eventdevs/octeontx2.rst b/doc/guides/eventdevs/octeontx2.rst
+index c864f39f921d..9b235f2361c3 100644
+--- a/doc/guides/eventdevs/octeontx2.rst
++++ b/doc/guides/eventdevs/octeontx2.rst
+@@ -66,6 +66,21 @@ Runtime Config Options
+ 
+     --dev "0002:0e:00.0,single_ws=1"
+ 
++- ``Event Group QoS support``
++
++  SSO GGRPs i.e. queue uses DRAM & SRAM buffers to hold in-flight
++  events. By default the buffers are assigned to the SSO GGRPs to
++  satisfy minimum HW requirements. SSO is free to assign the remaining
++  buffers to GGRPs based on a preconfigured threshold.
++  We can control the QoS of SSO GGRP by modifying the above mentioned
++  thresholds. GGRPs that have higher importance can be assigned higher
++  thresholds than the rest. The dictionary format is as follows
++  [Qx-XAQ-TAQ-IAQ][Qz-XAQ-TAQ-IAQ] expressed in percentages, 0 represents
++  default.
++  For example::
++
++    --dev "0002:0e:00.0,qos=[1-50-50-50]"
++
+ Debugging Options
+ ~~~~~~~~~~~~~~~~~
+ 
+diff --git a/drivers/event/octeontx2/otx2_evdev.c b/drivers/event/octeontx2/otx2_evdev.c
+index d6ddee1cd000..786772ba98e3 100644
+--- a/drivers/event/octeontx2/otx2_evdev.c
++++ b/drivers/event/octeontx2/otx2_evdev.c
+@@ -934,6 +934,34 @@ otx2_handle_event(void *arg, struct rte_event event)
+ 				event, event_dev->data->dev_stop_flush_arg);
+ }
+ 
++static void
++sso_qos_cfg(struct rte_eventdev *event_dev)
++{
++	struct otx2_sso_evdev *dev = sso_pmd_priv(event_dev);
++	struct sso_grp_qos_cfg *req;
++	uint16_t i;
++
++	for (i = 0; i < dev->qos_queue_cnt; i++) {
++		uint8_t xaq_prcnt = dev->qos_parse_data[i].xaq_prcnt;
++		uint8_t iaq_prcnt = dev->qos_parse_data[i].iaq_prcnt;
++		uint8_t taq_prcnt = dev->qos_parse_data[i].taq_prcnt;
++
++		if (dev->qos_parse_data[i].queue >= dev->nb_event_queues)
++			continue;
++
++		req = otx2_mbox_alloc_msg_sso_grp_qos_config(dev->mbox);
++		req->xaq_limit = (dev->nb_xaq_cfg *
++				  (xaq_prcnt ? xaq_prcnt : 100)) / 100;
++		req->taq_thr = (SSO_HWGRP_IAQ_MAX_THR_MASK *
++				(iaq_prcnt ? iaq_prcnt : 100)) / 100;
++		req->iaq_thr = (SSO_HWGRP_TAQ_MAX_THR_MASK *
++				(taq_prcnt ? taq_prcnt : 100)) / 100;
++	}
++
++	if (dev->qos_queue_cnt)
++		otx2_mbox_process(dev->mbox);
++}
++
+ static void
+ sso_cleanup(struct rte_eventdev *event_dev, uint8_t enable)
+ {
+@@ -1005,6 +1033,7 @@ static int
+ otx2_sso_start(struct rte_eventdev *event_dev)
+ {
+ 	sso_func_trace();
++	sso_qos_cfg(event_dev);
+ 	sso_cleanup(event_dev, 1);
+ 	sso_fastpath_fns_set(event_dev);
+ 
+@@ -1035,6 +1064,76 @@ static struct rte_eventdev_ops otx2_sso_ops = {
+ 
+ #define OTX2_SSO_XAE_CNT	"xae_cnt"
+ #define OTX2_SSO_SINGLE_WS	"single_ws"
++#define OTX2_SSO_GGRP_QOS	"qos"
++
++static void
++parse_queue_param(char *value, void *opaque)
++{
++	struct otx2_sso_qos queue_qos = {0};
++	uint8_t *val = (uint8_t *)&queue_qos;
++	struct otx2_sso_evdev *dev = opaque;
++	char *tok = strtok(value, "-");
++
++	if (!strlen(value))
++		return;
++
++	while (tok != NULL) {
++		*val = atoi(tok);
++		tok = strtok(NULL, "-");
++		val++;
++	}
++
++	if (val != (&queue_qos.iaq_prcnt + 1)) {
++		otx2_err("Invalid QoS parameter expected [Qx-XAQ-TAQ-IAQ]");
++		return;
++	}
++
++	dev->qos_queue_cnt++;
++	dev->qos_parse_data = rte_realloc(dev->qos_parse_data,
++					  sizeof(struct otx2_sso_qos) *
++					  dev->qos_queue_cnt, 0);
++	dev->qos_parse_data[dev->qos_queue_cnt - 1] = queue_qos;
++}
++
++static void
++parse_qos_list(const char *value, void *opaque)
++{
++	char *s = strdup(value);
++	char *start = NULL;
++	char *end = NULL;
++	char *f = s;
++
++	while (*s) {
++		if (*s == '[')
++			start = s;
++		else if (*s == ']')
++			end = s;
++
++		if (start < end && *start) {
++			*end = 0;
++			parse_queue_param(start + 1, opaque);
++			s = end;
++			start = end;
++		}
++		s++;
++	}
++
++	free(f);
++}
++
++static int
++parse_sso_kvargs_dict(const char *key, const char *value, void *opaque)
++{
++	RTE_SET_USED(key);
++
++	/* Dict format [Qx-XAQ-TAQ-IAQ][Qz-XAQ-TAQ-IAQ] use '-' cause ','
++	 * isn't allowed. Everything is expressed in percentages, 0 represents
++	 * default.
++	 */
++	parse_qos_list(value, opaque);
++
++	return 0;
++}
+ 
+ static void
+ sso_parse_devargs(struct otx2_sso_evdev *dev, struct rte_devargs *devargs)
+@@ -1052,6 +1151,8 @@ sso_parse_devargs(struct otx2_sso_evdev *dev, struct rte_devargs *devargs)
+ 			   &dev->xae_cnt);
+ 	rte_kvargs_process(kvlist, OTX2_SSO_SINGLE_WS, &parse_kvargs_flag,
+ 			   &single_ws);
++	rte_kvargs_process(kvlist, OTX2_SSO_GGRP_QOS, &parse_sso_kvargs_dict,
++			   dev);
+ 
+ 	dev->dual_ws = !single_ws;
+ 	rte_kvargs_free(kvlist);
+@@ -1206,4 +1307,5 @@ RTE_PMD_REGISTER_PCI(event_octeontx2, pci_sso);
+ RTE_PMD_REGISTER_PCI_TABLE(event_octeontx2, pci_sso_map);
+ RTE_PMD_REGISTER_KMOD_DEP(event_octeontx2, "vfio-pci");
+ RTE_PMD_REGISTER_PARAM_STRING(event_octeontx2, OTX2_SSO_XAE_CNT "=<int>"
+-			      OTX2_SSO_SINGLE_WS "=1");
++			      OTX2_SSO_SINGLE_WS "=1"
++			      OTX2_SSO_GGRP_QOS "=<string>");
+diff --git a/drivers/event/octeontx2/otx2_evdev.h b/drivers/event/octeontx2/otx2_evdev.h
+index 4428abcfae3a..2aa742184111 100644
+--- a/drivers/event/octeontx2/otx2_evdev.h
++++ b/drivers/event/octeontx2/otx2_evdev.h
+@@ -104,6 +104,13 @@ enum {
+ 	SSO_SYNC_EMPTY
+ };
+ 
++struct otx2_sso_qos {
++	uint8_t queue;
++	uint8_t xaq_prcnt;
++	uint8_t taq_prcnt;
++	uint8_t iaq_prcnt;
++};
++
+ struct otx2_sso_evdev {
+ 	OTX2_DEV; /* Base class */
+ 	uint8_t max_event_queues;
+@@ -124,6 +131,8 @@ struct otx2_sso_evdev {
+ 	/* Dev args */
+ 	uint8_t dual_ws;
+ 	uint32_t xae_cnt;
++	uint8_t qos_queue_cnt;
++	struct otx2_sso_qos *qos_parse_data;
+ 	/* HW const */
+ 	uint32_t xae_waes;
+ 	uint32_t xaq_buf_size;
+-- 
+2.14.4
+

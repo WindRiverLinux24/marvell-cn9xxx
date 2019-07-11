@@ -1,0 +1,160 @@
+From 3987babfd588b030ff1f371b652862812c98782b Mon Sep 17 00:00:00 2001
+From: Pavan Nikhilesh <pbhagavatula@marvell.com>
+Date: Fri, 28 Jun 2019 23:53:44 +0530
+Subject: [PATCH 063/154] event/octeontx2: allow adapters to resize inflight
+ buffers
+
+Add internal SSO functions to allow event adapters to resize SSO buffers
+that are used to hold in-flight events in DRAM.
+
+Signed-off-by: Pavan Nikhilesh <pbhagavatula@marvell.com>
+---
+ drivers/event/octeontx2/Makefile           |  1 +
+ drivers/event/octeontx2/meson.build        |  1 +
+ drivers/event/octeontx2/otx2_evdev.c       | 31 ++++++++++++++++++++++++++++++
+ drivers/event/octeontx2/otx2_evdev.h       |  5 +++++
+ drivers/event/octeontx2/otx2_evdev_adptr.c | 19 ++++++++++++++++++
+ drivers/event/octeontx2/otx2_tim_evdev.c   |  5 +++++
+ 6 files changed, 62 insertions(+)
+ create mode 100644 drivers/event/octeontx2/otx2_evdev_adptr.c
+
+diff --git a/drivers/event/octeontx2/Makefile b/drivers/event/octeontx2/Makefile
+index e61b07f0e6f0..87eb94637ee5 100644
+--- a/drivers/event/octeontx2/Makefile
++++ b/drivers/event/octeontx2/Makefile
+@@ -36,6 +36,7 @@ LIBABIVER := 1
+ SRCS-$(CONFIG_RTE_LIBRTE_PMD_OCTEONTX2_EVENTDEV) += otx2_worker_dual.c
+ SRCS-$(CONFIG_RTE_LIBRTE_PMD_OCTEONTX2_EVENTDEV) += otx2_worker.c
+ SRCS-$(CONFIG_RTE_LIBRTE_PMD_OCTEONTX2_EVENTDEV) += otx2_evdev.c
++SRCS-$(CONFIG_RTE_LIBRTE_PMD_OCTEONTX2_EVENTDEV) += otx2_evdev_adptr.c
+ SRCS-$(CONFIG_RTE_LIBRTE_PMD_OCTEONTX2_EVENTDEV) += otx2_tim_evdev.c
+ SRCS-$(CONFIG_RTE_LIBRTE_PMD_OCTEONTX2_EVENTDEV) += otx2_evdev_selftest.c
+ SRCS-$(CONFIG_RTE_LIBRTE_PMD_OCTEONTX2_EVENTDEV) += otx2_evdev_irq.c
+diff --git a/drivers/event/octeontx2/meson.build b/drivers/event/octeontx2/meson.build
+index ad7f2e084f05..c709b5e6912c 100644
+--- a/drivers/event/octeontx2/meson.build
++++ b/drivers/event/octeontx2/meson.build
+@@ -5,6 +5,7 @@
+ sources = files('otx2_worker.c',
+ 		'otx2_worker_dual.c',
+ 		'otx2_evdev.c',
++		'otx2_evdev_adptr.c',
+ 		'otx2_evdev_irq.c',
+ 		'otx2_evdev_selftest.c',
+ 		'otx2_tim_evdev.c',
+diff --git a/drivers/event/octeontx2/otx2_evdev.c b/drivers/event/octeontx2/otx2_evdev.c
+index a1222b3cfea8..914869b6cacb 100644
+--- a/drivers/event/octeontx2/otx2_evdev.c
++++ b/drivers/event/octeontx2/otx2_evdev.c
+@@ -529,6 +529,9 @@ sso_xaq_allocate(struct otx2_sso_evdev *dev)
+ 	xaq_cnt = dev->nb_event_queues * OTX2_SSO_XAQ_CACHE_CNT;
+ 	if (dev->xae_cnt)
+ 		xaq_cnt += dev->xae_cnt / dev->xae_waes;
++	else if (dev->adptr_xae_cnt)
++		xaq_cnt += (dev->adptr_xae_cnt / dev->xae_waes) +
++			(OTX2_SSO_XAQ_SLACK * dev->nb_event_queues);
+ 	else
+ 		xaq_cnt += (dev->iue / dev->xae_waes) +
+ 			(OTX2_SSO_XAQ_SLACK * dev->nb_event_queues);
+@@ -1030,6 +1033,34 @@ sso_cleanup(struct rte_eventdev *event_dev, uint8_t enable)
+ 	otx2_mbox_process(dev->mbox);
+ }
+ 
++int
++sso_xae_reconfigure(struct rte_eventdev *event_dev)
++{
++	struct otx2_sso_evdev *dev = sso_pmd_priv(event_dev);
++	struct rte_mempool *prev_xaq_pool;
++	int rc = 0;
++
++	if (event_dev->data->dev_started)
++		sso_cleanup(event_dev, 0);
++
++	prev_xaq_pool = dev->xaq_pool;
++	dev->xaq_pool = NULL;
++	sso_xaq_allocate(dev);
++	rc = sso_ggrp_alloc_xaq(dev);
++	if (rc < 0) {
++		otx2_err("Failed to alloc xaq to ggrp %d", rc);
++		rte_mempool_free(prev_xaq_pool);
++		return rc;
++	}
++
++	rte_mempool_free(prev_xaq_pool);
++	rte_mb();
++	if (event_dev->data->dev_started)
++		sso_cleanup(event_dev, 1);
++
++	return 0;
++}
++
+ static int
+ otx2_sso_start(struct rte_eventdev *event_dev)
+ {
+diff --git a/drivers/event/octeontx2/otx2_evdev.h b/drivers/event/octeontx2/otx2_evdev.h
+index 1e15b7e1c4fd..ba3aae5baaa5 100644
+--- a/drivers/event/octeontx2/otx2_evdev.h
++++ b/drivers/event/octeontx2/otx2_evdev.h
+@@ -129,6 +129,7 @@ struct otx2_sso_evdev {
+ 	uint64_t nb_xaq_cfg;
+ 	rte_iova_t fc_iova;
+ 	struct rte_mempool *xaq_pool;
++	uint32_t adptr_xae_cnt;
+ 	/* Dev args */
+ 	uint8_t dual_ws;
+ 	uint8_t selftest;
+@@ -243,6 +244,10 @@ uint16_t otx2_ssogws_dual_deq_timeout(void *port, struct rte_event *ev,
+ uint16_t otx2_ssogws_dual_deq_timeout_burst(void *port, struct rte_event ev[],
+ 					    uint16_t nb_events,
+ 					    uint64_t timeout_ticks);
++
++void sso_updt_xae_cnt(struct otx2_sso_evdev *dev, void *data,
++		      uint32_t event_type);
++int sso_xae_reconfigure(struct rte_eventdev *event_dev);
+ void sso_fastpath_fns_set(struct rte_eventdev *event_dev);
+ /* Clean up API's */
+ typedef void (*otx2_handle_event_t)(void *arg, struct rte_event ev);
+diff --git a/drivers/event/octeontx2/otx2_evdev_adptr.c b/drivers/event/octeontx2/otx2_evdev_adptr.c
+new file mode 100644
+index 000000000000..810722f89de7
+--- /dev/null
++++ b/drivers/event/octeontx2/otx2_evdev_adptr.c
+@@ -0,0 +1,19 @@
++/* SPDX-License-Identifier: BSD-3-Clause
++ * Copyright(C) 2019 Marvell International Ltd.
++ */
++
++#include "otx2_evdev.h"
++
++void
++sso_updt_xae_cnt(struct otx2_sso_evdev *dev, void *data, uint32_t event_type)
++{
++	switch (event_type) {
++	case RTE_EVENT_TYPE_TIMER:
++	{
++		dev->adptr_xae_cnt += (*(uint64_t *)data);
++		break;
++	}
++	default:
++		break;
++	}
++}
+diff --git a/drivers/event/octeontx2/otx2_tim_evdev.c b/drivers/event/octeontx2/otx2_tim_evdev.c
+index 4c503bca8c11..a2cba09f3e7c 100644
+--- a/drivers/event/octeontx2/otx2_tim_evdev.c
++++ b/drivers/event/octeontx2/otx2_tim_evdev.c
+@@ -315,6 +315,11 @@ otx2_tim_ring_create(struct rte_event_timer_adapter *adptr)
+ 		     tim_ring->base + TIM_LF_RING_BASE);
+ 	otx2_write64(tim_ring->aura, tim_ring->base + TIM_LF_RING_AURA);
+ 
++	/* Update SSO xae count. */
++	sso_updt_xae_cnt(sso_pmd_priv(dev->event_dev), (void *)&nb_timers,
++			 RTE_EVENT_TYPE_TIMER);
++	sso_xae_reconfigure(dev->event_dev);
++
+ 	return rc;
+ 
+ chnk_mem_err:
+-- 
+2.14.4
+

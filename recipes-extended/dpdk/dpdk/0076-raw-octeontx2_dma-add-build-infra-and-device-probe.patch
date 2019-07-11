@@ -1,0 +1,371 @@
+From aaed4195585f11f170f2b9907ca1ee677adc6db2 Mon Sep 17 00:00:00 2001
+From: Jerin Jacob <jerinj@marvell.com>
+Date: Fri, 5 Jul 2019 14:07:58 +0530
+Subject: [PATCH 076/154] raw/octeontx2_dma: add build infra and device probe
+
+Add the make and meson based build infrastructure along
+with the DMA device probe with documentation infrastructure.
+
+Signed-off-by: Jerin Jacob <jerinj@marvell.com>
+Signed-off-by: Satha Rao <skoteshwar@marvell.com>
+Signed-off-by: Vamsi Attunuru <vattunuru@marvell.com>
+---
+ MAINTAINERS                                        |  6 ++
+ config/common_base                                 |  5 ++
+ doc/guides/platform/octeontx2.rst                  |  5 ++
+ doc/guides/rawdevs/index.rst                       |  1 +
+ doc/guides/rawdevs/octeontx2_dma.rst               | 64 ++++++++++++++
+ drivers/raw/Makefile                               |  1 +
+ drivers/raw/meson.build                            |  2 +-
+ drivers/raw/octeontx2_dma/Makefile                 | 25 ++++++
+ drivers/raw/octeontx2_dma/meson.build              |  6 ++
+ drivers/raw/octeontx2_dma/otx2_dpi_rawdev.c        | 99 ++++++++++++++++++++++
+ .../rte_pmd_octeontx2_dma_version.map              |  4 +
+ mk/rte.app.mk                                      |  2 +
+ 12 files changed, 219 insertions(+), 1 deletion(-)
+ create mode 100644 doc/guides/rawdevs/octeontx2_dma.rst
+ create mode 100644 drivers/raw/octeontx2_dma/Makefile
+ create mode 100644 drivers/raw/octeontx2_dma/meson.build
+ create mode 100644 drivers/raw/octeontx2_dma/otx2_dpi_rawdev.c
+ create mode 100644 drivers/raw/octeontx2_dma/rte_pmd_octeontx2_dma_version.map
+
+diff --git a/MAINTAINERS b/MAINTAINERS
+index fb7a76118b53..85ca38b9e95d 100644
+--- a/MAINTAINERS
++++ b/MAINTAINERS
+@@ -1013,6 +1013,12 @@ M: Nipun Gupta <nipun.gupta@nxp.com>
+ F: drivers/raw/dpaa2_cmdif/
+ F: doc/guides/rawdevs/dpaa2_cmdif.rst
+ 
++Marvell OCTEON TX2 DMA
++M: Satha Rao <skoteshwar@marvell.com>
++M: Vamsi Attunuru <vattunuru@marvell.com>
++F: drivers/raw/octeontx2_dma/
++F: doc/guides/rawdevs/octeontx2_dma.rst
++
+ 
+ Packet processing
+ -----------------
+diff --git a/config/common_base b/config/common_base
+index 10d92f21cda6..8776eed450f4 100644
+--- a/config/common_base
++++ b/config/common_base
+@@ -705,6 +705,11 @@ CONFIG_RTE_LIBRTE_PMD_DPAA2_QDMA_RAWDEV=n
+ #
+ CONFIG_RTE_LIBRTE_PMD_IFPGA_RAWDEV=y
+ 
++#
++# Compile PMD for octeontx2 DMA raw device
++#
++CONFIG_RTE_LIBRTE_PMD_OCTEONTX2_DMA_RAWDEV=y
++
+ #
+ # Compile librte_ring
+ #
+diff --git a/doc/guides/platform/octeontx2.rst b/doc/guides/platform/octeontx2.rst
+index fbf1193e746a..b2a4c030ca37 100644
+--- a/doc/guides/platform/octeontx2.rst
++++ b/doc/guides/platform/octeontx2.rst
+@@ -104,6 +104,9 @@ This section lists dataplane H/W block(s) available in OCTEON TX2 SoC.
+ #. **Event Device Driver**
+    See :doc:`../eventdevs/octeontx2` for SSO event device driver information.
+ 
++#. **DMA Rawdev Driver**
++   See :doc:`../rawdevs/octeontx2_dma` for DMA driver information.
++
+ Procedure to Setup Platform
+ ---------------------------
+ 
+@@ -146,6 +149,8 @@ compatible board:
+         # Enable if netdev VF driver required
+         CONFIG_OCTEONTX2_VF=y
+         CONFIG_CRYPTO_DEV_OCTEONTX2_CPT=y
++        # Enable if OCTEONTX2 DMA PF driver required
++        CONFIG_OCTEONTX2_DPI_PF=n
+ 
+ 2. **ARM64 Linux Tool Chain**
+ 
+diff --git a/doc/guides/rawdevs/index.rst b/doc/guides/rawdevs/index.rst
+index 7c3bd95861c2..1351d14e4acd 100644
+--- a/doc/guides/rawdevs/index.rst
++++ b/doc/guides/rawdevs/index.rst
+@@ -14,3 +14,4 @@ application through rawdev API.
+     dpaa2_cmdif
+     dpaa2_qdma
+     ifpga_rawdev
++    octeontx2_dma
+diff --git a/doc/guides/rawdevs/octeontx2_dma.rst b/doc/guides/rawdevs/octeontx2_dma.rst
+new file mode 100644
+index 000000000000..34807bde4fa8
+--- /dev/null
++++ b/doc/guides/rawdevs/octeontx2_dma.rst
+@@ -0,0 +1,64 @@
++..  SPDX-License-Identifier: BSD-3-Clause
++    Copyright(c) 2019 Marvell International Ltd.
++
++OCTEON TX2 DMA Driver
++=====================
++
++OCTEON TX2 has an internal DMA unit which can be used by applications to initiate
++DMA transaction internally, from/to host when OCTEON TX2 operates in PCIe End
++Point mode. The DMA PF function supports 8 VFs corresponding to 8 DMA queues.
++Each DMA queue was exposed as a VF function when SRIOV enabled.
++
++Features
++--------
++
++This DMA PMD supports below 3 modes of memory transfers
++
++#. Internal - OCTEON TX2 DRAM to DRAM without core intervention
++
++#. Inbound  - Host DRAM to OCTEON TX2 DRAM without host/OCTEON TX2 cores involvement
++
++#. Outbound - OCTEON TX2 DRAM to Host DRAM without host/OCTEON TX2 cores involvement
++
++Prerequisites and Compilation procedure
++---------------------------------------
++
++   See :doc:`../platform/octeontx2` for setup information.
++
++
++Pre-Installation Configuration
++------------------------------
++
++Config File Options
++~~~~~~~~~~~~~~~~~~~
++
++The following options can be modified in the ``config`` file.
++
++- ``CONFIG_RTE_LIBRTE_PMD_OCTEONTX2_DMA_RAWDEV`` (default ``y``)
++
++  Toggle compilation of the ``lrte_pmd_octeontx2_dma`` driver.
++
++Enabling logs
++-------------
++
++For enabling logs, use the following EAL parameter:
++
++.. code-block:: console
++
++   ./your_dma_application <EAL args> --log-level=pmd.raw.octeontx2.dpi,<level>
++
++Using ``pmd.raw.octeontx2.dpi`` as log matching criteria, all Event PMD logs
++can be enabled which are lower than logging ``level``.
++
++Initialization
++--------------
++
++The number of DMA VFs (queues) enabled can be controlled by setting sysfs
++entry, `sriov_numvfs` for the corresponding PF driver.
++
++.. code-block:: console
++
++ echo <num_vfs> > /sys/bus/pci/drivers/octeontx2-dpi/0000\:05\:00.0/sriov_numvfs
++
++Once the required VFs are enabled, to be accessible from DPDK, VFs need to be
++bound to vfio-pci driver.
+diff --git a/drivers/raw/Makefile b/drivers/raw/Makefile
+index 8e29b4a561d0..6af639ba2645 100644
+--- a/drivers/raw/Makefile
++++ b/drivers/raw/Makefile
+@@ -10,5 +10,6 @@ DIRS-$(CONFIG_RTE_LIBRTE_PMD_DPAA2_CMDIF_RAWDEV) += dpaa2_cmdif
+ DIRS-$(CONFIG_RTE_LIBRTE_PMD_DPAA2_QDMA_RAWDEV) += dpaa2_qdma
+ endif
+ DIRS-$(CONFIG_RTE_LIBRTE_PMD_IFPGA_RAWDEV) += ifpga_rawdev
++DIRS-$(CONFIG_RTE_LIBRTE_PMD_OCTEONTX2_DMA_RAWDEV) += octeontx2_dma
+ 
+ include $(RTE_SDK)/mk/rte.subdir.mk
+diff --git a/drivers/raw/meson.build b/drivers/raw/meson.build
+index a61cdccef4f0..00475d651c0f 100644
+--- a/drivers/raw/meson.build
++++ b/drivers/raw/meson.build
+@@ -1,7 +1,7 @@
+ # SPDX-License-Identifier: BSD-3-Clause
+ # Copyright 2018 NXP
+ 
+-drivers = ['skeleton_rawdev', 'dpaa2_cmdif', 'dpaa2_qdma', 'ifpga_rawdev']
++drivers = ['skeleton_rawdev', 'dpaa2_cmdif', 'dpaa2_qdma', 'ifpga_rawdev', 'octeontx2_dma']
+ std_deps = ['rawdev']
+ config_flag_fmt = 'RTE_LIBRTE_PMD_@0@_RAWDEV'
+ driver_name_fmt = 'rte_pmd_@0@'
+diff --git a/drivers/raw/octeontx2_dma/Makefile b/drivers/raw/octeontx2_dma/Makefile
+new file mode 100644
+index 000000000000..1892c1e27b30
+--- /dev/null
++++ b/drivers/raw/octeontx2_dma/Makefile
+@@ -0,0 +1,25 @@
++# SPDX-License-Identifier: BSD-3-Clause
++# Copyright(C) 2019 Marvell International Ltd.
++#
++
++include $(RTE_SDK)/mk/rte.vars.mk
++
++# library name
++LIB = librte_pmd_octeontx2_dma.a
++
++CFLAGS += -O3 $(WERROR_FLAGS)
++CFLAGS += -I$(RTE_SDK)/drivers/common/octeontx2/
++CFLAGS += -I$(RTE_SDK)/drivers/raw/octeontx2_dma/
++LDLIBS += -lrte_eal -lrte_rawdev -lrte_bus_pci
++LDLIBS += -lrte_common_octeontx2
++
++EXPORT_MAP := rte_pmd_octeontx2_dma_version.map
++
++LIBABIVER := 1
++
++#
++# all source are stored in SRCS-y
++#
++SRCS-$(CONFIG_RTE_LIBRTE_PMD_OCTEONTX2_DMA_RAWDEV) += otx2_dpi_rawdev.c
++
++include $(RTE_SDK)/mk/rte.lib.mk
+diff --git a/drivers/raw/octeontx2_dma/meson.build b/drivers/raw/octeontx2_dma/meson.build
+new file mode 100644
+index 000000000000..76a7b1645c8c
+--- /dev/null
++++ b/drivers/raw/octeontx2_dma/meson.build
+@@ -0,0 +1,6 @@
++# SPDX-License-Identifier: BSD-3-Clause
++# Copyright(C) 2019 Marvell International Ltd.
++#
++
++deps += ['bus_pci', 'common_octeontx2', 'rawdev']
++sources = files('otx2_dpi_rawdev.c')
+diff --git a/drivers/raw/octeontx2_dma/otx2_dpi_rawdev.c b/drivers/raw/octeontx2_dma/otx2_dpi_rawdev.c
+new file mode 100644
+index 000000000000..c363bf44df58
+--- /dev/null
++++ b/drivers/raw/octeontx2_dma/otx2_dpi_rawdev.c
+@@ -0,0 +1,99 @@
++/* SPDX-License-Identifier: BSD-3-Clause
++ * Copyright(C) 2019 Marvell International Ltd.
++ */
++
++#include <string.h>
++#include <unistd.h>
++
++#include <rte_bus.h>
++#include <rte_bus_pci.h>
++#include <rte_common.h>
++#include <rte_eal.h>
++#include <rte_lcore.h>
++#include <rte_pci.h>
++#include <rte_rawdev.h>
++#include <rte_rawdev_pmd.h>
++
++#include <otx2_common.h>
++
++static const struct rte_pci_id pci_dma_map[] = {
++	{
++		RTE_PCI_DEVICE(PCI_VENDOR_ID_CAVIUM,
++			       PCI_DEVID_OCTEONTX2_DPI_VF)
++	},
++	{
++		.vendor_id = 0,
++	},
++};
++
++static int
++otx2_dpi_rawdev_probe(struct rte_pci_driver *pci_drv __rte_unused,
++		      struct rte_pci_device *pci_dev)
++{
++	char name[RTE_RAWDEV_NAME_MAX_LEN];
++	struct rte_rawdev *rawdev;
++
++	/* For secondary processes, the primary has done all the work */
++	if (rte_eal_process_type() != RTE_PROC_PRIMARY)
++		return 0;
++
++	if (pci_dev->mem_resource[0].addr == NULL) {
++		otx2_dpi_dbg("Empty bars %p %p", pci_dev->mem_resource[0].addr,
++			     pci_dev->mem_resource[2].addr);
++		return -ENODEV;
++	}
++
++	memset(name, 0, sizeof(name));
++	snprintf(name, RTE_RAWDEV_NAME_MAX_LEN, "DPI:%x:%02x.%x",
++		 pci_dev->addr.bus, pci_dev->addr.devid,
++		 pci_dev->addr.function);
++
++	/* Allocate device structure */
++	rawdev = rte_rawdev_pmd_allocate(name, 0, rte_socket_id());
++	if (rawdev == NULL) {
++		otx2_err("Rawdev allocation failed");
++		return -EINVAL;
++	}
++
++	rawdev->device = &pci_dev->device;
++	rawdev->driver_name = pci_dev->driver->driver.name;
++
++	return 0;
++}
++
++static int
++otx2_dpi_rawdev_remove(struct rte_pci_device *pci_dev)
++{
++	char name[RTE_RAWDEV_NAME_MAX_LEN];
++	struct rte_rawdev *rawdev;
++
++	if (pci_dev == NULL) {
++		otx2_dpi_dbg("Invalid pci_dev of the device!");
++		return -EINVAL;
++	}
++
++	memset(name, 0, sizeof(name));
++	snprintf(name, RTE_RAWDEV_NAME_MAX_LEN, "DPI:%x:%02x.%x",
++		 pci_dev->addr.bus, pci_dev->addr.devid,
++		 pci_dev->addr.function);
++
++	rawdev = rte_rawdev_pmd_get_named_dev(name);
++	if (rawdev == NULL) {
++		otx2_dpi_dbg("Invalid device name (%s)", name);
++		return -EINVAL;
++	}
++
++	/* rte_rawdev_close is called by pmd_release */
++	return rte_rawdev_pmd_release(rawdev);
++}
++
++static struct rte_pci_driver rte_dpi_rawdev_pmd = {
++	.id_table  = pci_dma_map,
++	.drv_flags = RTE_PCI_DRV_NEED_MAPPING | RTE_PCI_DRV_IOVA_AS_VA,
++	.probe     = otx2_dpi_rawdev_probe,
++	.remove    = otx2_dpi_rawdev_remove,
++};
++
++RTE_PMD_REGISTER_PCI(dpi_rawdev_pci_driver, rte_dpi_rawdev_pmd);
++RTE_PMD_REGISTER_PCI_TABLE(dpi_rawdev_pci_driver, pci_dma_map);
++RTE_PMD_REGISTER_KMOD_DEP(dpi_rawdev_pci_driver, "vfio-pci");
+diff --git a/drivers/raw/octeontx2_dma/rte_pmd_octeontx2_dma_version.map b/drivers/raw/octeontx2_dma/rte_pmd_octeontx2_dma_version.map
+new file mode 100644
+index 000000000000..9a61188cd520
+--- /dev/null
++++ b/drivers/raw/octeontx2_dma/rte_pmd_octeontx2_dma_version.map
+@@ -0,0 +1,4 @@
++DPDK_19.08 {
++
++	local: *;
++};
+diff --git a/mk/rte.app.mk b/mk/rte.app.mk
+index cf7de4b5ff57..d30e0b98af68 100644
+--- a/mk/rte.app.mk
++++ b/mk/rte.app.mk
+@@ -109,6 +109,7 @@ _LDLIBS-y += -lrte_common_octeontx
+ endif
+ OCTEONTX2-y := $(CONFIG_RTE_LIBRTE_OCTEONTX2_MEMPOOL)
+ OCTEONTX2-y += $(CONFIG_RTE_LIBRTE_PMD_OCTEONTX2_EVENTDEV)
++OCTEONTX2-y += $(CONFIG_RTE_LIBRTE_PMD_OCTEONTX2_DMA_RAWDEV)
+ ifeq ($(findstring y,$(OCTEONTX2-y)),y)
+ _LDLIBS-y += -lrte_common_octeontx2
+ endif
+@@ -297,6 +298,7 @@ _LDLIBS-$(CONFIG_RTE_LIBRTE_IFPGA_BUS)      += -lrte_bus_ifpga
+ ifeq ($(CONFIG_RTE_LIBRTE_IFPGA_BUS),y)
+ _LDLIBS-$(CONFIG_RTE_LIBRTE_PMD_IFPGA_RAWDEV)   += -lrte_pmd_ifpga_rawdev
+ endif # CONFIG_RTE_LIBRTE_IFPGA_BUS
++_LDLIBS-$(CONFIG_RTE_LIBRTE_PMD_OCTEONTX2_DMA_RAWDEV) += -lrte_pmd_octeontx2_dma
+ endif # CONFIG_RTE_LIBRTE_RAWDEV
+ 
+ endif # !CONFIG_RTE_BUILD_SHARED_LIBS
+-- 
+2.14.4
+

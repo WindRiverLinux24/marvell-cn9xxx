@@ -1,0 +1,324 @@
+From 3a35b4ea81676697c4da3a341b8a920a2cb20329 Mon Sep 17 00:00:00 2001
+From: Satha Rao <skoteshwar@marvell.com>
+Date: Fri, 5 Jul 2019 14:08:04 +0530
+Subject: [PATCH 082/154] raw/octeontx2_dma: add driver self test
+
+Sample test to verify DMA functionality, this test covers
+internal transfer mode.
+
+Signed-off-by: Satha Rao <skoteshwar@marvell.com>
+Signed-off-by: Vamsi Attunuru <vattunuru@marvell.com>
+---
+ doc/guides/rawdevs/octeontx2_dma.rst        |  14 ++
+ drivers/raw/octeontx2_dma/Makefile          |   3 +-
+ drivers/raw/octeontx2_dma/meson.build       |   2 +-
+ drivers/raw/octeontx2_dma/otx2_dpi_rawdev.c |   1 +
+ drivers/raw/octeontx2_dma/otx2_dpi_rawdev.h |   1 +
+ drivers/raw/octeontx2_dma/otx2_dpi_test.c   | 217 ++++++++++++++++++++++++++++
+ 6 files changed, 236 insertions(+), 2 deletions(-)
+ create mode 100644 drivers/raw/octeontx2_dma/otx2_dpi_test.c
+
+diff --git a/doc/guides/rawdevs/octeontx2_dma.rst b/doc/guides/rawdevs/octeontx2_dma.rst
+index 748f4dbd4935..579c70c5e9b0 100644
+--- a/doc/guides/rawdevs/octeontx2_dma.rst
++++ b/doc/guides/rawdevs/octeontx2_dma.rst
+@@ -88,3 +88,17 @@ Performing Data Transfer
+ 
+ To perform data transfer using OCTEON TX2 DMA rawdev devices use standard
+ ``rte_rawdev_enqueue_buffers()`` and ``rte_rawdev_dequeue_buffers()`` APIs.
++
++Self test
++---------
++
++On EAL initialization, dma devices will be probed and populated into the
++raw devices. The rawdev ID of the device can be obtained using
++
++* Invoke ``rte_rawdev_get_dev_id("DPI:x")`` from the application
++  where x is the VF device's bus id specified in "bus:device.func" format. Use this
++  index for further rawdev function calls.
++
++* This PMD supports driver self test, to test DMA internal mode from test
++  application one can directly calls
++  ``rte_rawdev_selftest(rte_rawdev_get_dev_id("DPI:x"))``
+diff --git a/drivers/raw/octeontx2_dma/Makefile b/drivers/raw/octeontx2_dma/Makefile
+index e1993fe0485f..96f782eb68b6 100644
+--- a/drivers/raw/octeontx2_dma/Makefile
++++ b/drivers/raw/octeontx2_dma/Makefile
+@@ -11,7 +11,7 @@ CFLAGS += -O3 $(WERROR_FLAGS)
+ CFLAGS += -I$(RTE_SDK)/drivers/common/octeontx2/
+ CFLAGS += -I$(RTE_SDK)/drivers/mempool/octeontx2/
+ CFLAGS += -I$(RTE_SDK)/drivers/raw/octeontx2_dma/
+-LDLIBS += -lrte_eal -lrte_rawdev -lrte_bus_pci
++LDLIBS += -lrte_eal -lrte_rawdev -lrte_bus_pci -lrte_mbuf
+ LDLIBS += -lrte_common_octeontx2 -lrte_mempool
+ 
+ ifneq ($(CONFIG_RTE_ARCH_64),y)
+@@ -31,5 +31,6 @@ LIBABIVER := 1
+ #
+ SRCS-$(CONFIG_RTE_LIBRTE_PMD_OCTEONTX2_DMA_RAWDEV) += otx2_dpi_rawdev.c
+ SRCS-$(CONFIG_RTE_LIBRTE_PMD_OCTEONTX2_DMA_RAWDEV) += otx2_dpi_msg.c
++SRCS-$(CONFIG_RTE_LIBRTE_PMD_OCTEONTX2_DMA_RAWDEV) += otx2_dpi_test.c
+ 
+ include $(RTE_SDK)/mk/rte.lib.mk
+diff --git a/drivers/raw/octeontx2_dma/meson.build b/drivers/raw/octeontx2_dma/meson.build
+index 8ea182812fe1..11f74680a521 100644
+--- a/drivers/raw/octeontx2_dma/meson.build
++++ b/drivers/raw/octeontx2_dma/meson.build
+@@ -3,7 +3,7 @@
+ #
+ 
+ deps += ['bus_pci', 'common_octeontx2', 'rawdev']
+-sources = files('otx2_dpi_rawdev.c', 'otx2_dpi_msg.c')
++sources = files('otx2_dpi_rawdev.c', 'otx2_dpi_msg.c', 'otx2_dpi_test.c')
+ 
+ extra_flags = []
+ # This integrated controller runs only on a arm64 machine, remove 32bit warnings
+diff --git a/drivers/raw/octeontx2_dma/otx2_dpi_rawdev.c b/drivers/raw/octeontx2_dma/otx2_dpi_rawdev.c
+index 6ce218ec3525..6a1b43678ab0 100644
+--- a/drivers/raw/octeontx2_dma/otx2_dpi_rawdev.c
++++ b/drivers/raw/octeontx2_dma/otx2_dpi_rawdev.c
+@@ -338,6 +338,7 @@ static const struct rte_rawdev_ops dpi_rawdev_ops = {
+ 	.dev_reset = otx2_dpi_rawdev_reset,
+ 	.enqueue_bufs = otx2_dpi_rawdev_enqueue_bufs,
+ 	.dequeue_bufs = otx2_dpi_rawdev_dequeue_bufs,
++	.dev_selftest = test_otx2_dma_rawdev,
+ };
+ 
+ static int
+diff --git a/drivers/raw/octeontx2_dma/otx2_dpi_rawdev.h b/drivers/raw/octeontx2_dma/otx2_dpi_rawdev.h
+index f59bab97f281..9ebb2598867a 100644
+--- a/drivers/raw/octeontx2_dma/otx2_dpi_rawdev.h
++++ b/drivers/raw/octeontx2_dma/otx2_dpi_rawdev.h
+@@ -191,5 +191,6 @@ union dpi_dma_instr_hdr_u {
+ 
+ int otx2_dpi_queue_open(uint16_t vf_id, uint32_t size, uint32_t gaura);
+ int otx2_dpi_queue_close(uint16_t vf_id);
++int test_otx2_dma_rawdev(uint16_t val);
+ 
+ #endif /* _DPI_RAWDEV_H_ */
+diff --git a/drivers/raw/octeontx2_dma/otx2_dpi_test.c b/drivers/raw/octeontx2_dma/otx2_dpi_test.c
+new file mode 100644
+index 000000000000..276658af076f
+--- /dev/null
++++ b/drivers/raw/octeontx2_dma/otx2_dpi_test.c
+@@ -0,0 +1,217 @@
++/* SPDX-License-Identifier: BSD-3-Clause
++ * Copyright(C) 2019 Marvell International Ltd.
++ */
++
++#include <stdio.h>
++#include <stdlib.h>
++#include <string.h>
++#include <unistd.h>
++
++#include <rte_common.h>
++#include <rte_debug.h>
++#include <rte_eal.h>
++#include <rte_log.h>
++#include <rte_malloc.h>
++#include <rte_mbuf.h>
++#include <rte_mbuf_pool_ops.h>
++#include <rte_memcpy.h>
++#include <rte_memory.h>
++#include <rte_mempool.h>
++#include <rte_per_lcore.h>
++#include <rte_rawdev.h>
++
++#include "otx2_dpi_rawdev.h"
++
++static struct dpi_cring_data_s cring;
++
++static uint8_t
++buffer_fill(uint8_t *addr, int len, uint8_t val)
++{
++	int j = 0;
++
++	memset(addr, 0, len);
++	for (j = 0; j < len; j++)
++		*(addr + j) = val++;
++
++	return val;
++}
++
++static int
++validate_buffer(uint8_t *saddr, uint8_t *daddr, int len)
++{
++	int j = 0, ret = 0;
++
++	for (j = 0; j < len; j++) {
++		if (*(saddr + j) != *(daddr + j)) {
++			otx2_dpi_dbg("FAIL: Data Integrity failed");
++			otx2_dpi_dbg("index: %d, Expected: 0x%x, Actual: 0x%x",
++				     j, *(saddr + j), *(daddr + j));
++			ret = -1;
++			break;
++		}
++	}
++
++	return ret;
++}
++
++static inline int
++dma_test_internal(int dma_port, int buf_size)
++{
++	struct dpi_dma_req_compl_s *comp_data;
++	struct dpi_dma_queue_ctx_s ctx = {0};
++	struct rte_rawdev_buf buf = {0};
++	struct rte_rawdev_buf *d_buf[1];
++	struct rte_rawdev_buf *bufp[1];
++	struct dpi_dma_buf_ptr_s cmd;
++	union dpi_dma_ptr_u rptr = { {0} };
++	union dpi_dma_ptr_u wptr = { {0} };
++	uint8_t *fptr, *lptr;
++	int ret;
++
++	fptr = (uint8_t *)rte_malloc("dummy", buf_size, 128);
++	lptr = (uint8_t *)rte_malloc("dummy", buf_size, 128);
++	comp_data = rte_malloc("dummy", buf_size, 128);
++	if (fptr == NULL || lptr == NULL || comp_data == NULL) {
++		otx2_dpi_dbg("Unable to allocate internal memory");
++		return -ENOMEM;
++	}
++
++	buffer_fill(fptr, buf_size, 0);
++	memset(&cmd, 0, sizeof(struct dpi_dma_buf_ptr_s));
++	memset(lptr, 0, buf_size);
++	memset(comp_data, 0, buf_size);
++	rptr.s.ptr = (uint64_t)fptr;
++	rptr.s.length = buf_size;
++	wptr.s.ptr = (uint64_t)lptr;
++	wptr.s.length = buf_size;
++	cmd.rptr[0] = &rptr;
++	cmd.wptr[0] = &wptr;
++	cmd.rptr_cnt = 1;
++	cmd.wptr_cnt = 1;
++	cmd.comp_ptr = comp_data;
++	buf.buf_addr = (void *)&cmd;
++	bufp[0] = &buf;
++
++	ctx.xtype = DPI_XTYPE_INTERNAL_ONLY;
++	ctx.pt = 0;
++	ctx.c_ring = &cring;
++
++	ret = rte_rawdev_enqueue_buffers(dma_port,
++					 (struct rte_rawdev_buf **)bufp, 1,
++					 &ctx);
++	if (ret < 0) {
++		otx2_dpi_dbg("Enqueue request failed");
++		return 0;
++	}
++
++	/* Wait and dequeue completion */
++	do {
++		sleep(1);
++		ret = rte_rawdev_dequeue_buffers(dma_port, &d_buf[0], 1, &ctx);
++		if (ret)
++			break;
++
++		otx2_dpi_dbg("Dequeue request not completed");
++	} while (1);
++
++	if (validate_buffer(fptr, lptr, buf_size)) {
++		otx2_dpi_dbg("DMA transfer failed\n");
++		return -EAGAIN;
++	}
++	otx2_dpi_dbg("Internal Only DMA transfer successfully completed");
++
++	if (lptr)
++		rte_free(lptr);
++	if (fptr)
++		rte_free(fptr);
++	if (comp_data)
++		rte_free(comp_data);
++
++	return 0;
++}
++
++static void *
++dpi_create_mempool(void)
++{
++	void *chunk_pool = NULL;
++	char pool_name[25];
++	int ret;
++
++	snprintf(pool_name, sizeof(pool_name), "dpi_chunk_pool");
++
++	chunk_pool = (void *)rte_mempool_create_empty(pool_name, 1024, 1024,
++						      0, 0, rte_socket_id(), 0);
++	if (chunk_pool == NULL) {
++		otx2_dpi_dbg("Unable to create memory pool.");
++		return NULL;
++	}
++
++	ret = rte_mempool_set_ops_byname(chunk_pool,
++					 rte_mbuf_platform_mempool_ops(), NULL);
++	if (ret < 0) {
++		otx2_dpi_dbg("Unable to set pool ops");
++		rte_mempool_free(chunk_pool);
++		return NULL;
++	}
++
++	ret = rte_mempool_populate_default(chunk_pool);
++	if (ret < 0) {
++		otx2_dpi_dbg("Unable to populate pool");
++		return NULL;
++	}
++
++	return chunk_pool;
++}
++
++int
++test_otx2_dma_rawdev(uint16_t val)
++{
++	struct rte_rawdev_info rdev_info = {0};
++	struct dpi_rawdev_conf_s conf = {0};
++	int ret, i, size = 1024;
++	int nb_ports;
++
++	RTE_SET_USED(val);
++	nb_ports = rte_rawdev_count();
++	if (nb_ports == 0) {
++		otx2_dpi_dbg("No Rawdev ports - bye");
++		return -ENODEV;
++	}
++
++	i = rte_rawdev_get_dev_id("DPI:5:00.1");
++	/* Configure rawdev ports */
++	conf.chunk_pool = dpi_create_mempool();
++	rdev_info.dev_private = &conf;
++	ret = rte_rawdev_configure(i, (rte_rawdev_obj_t)&rdev_info);
++	if (ret) {
++		otx2_dpi_dbg("Unable to configure DPIVF %d", i);
++		return -ENODEV;
++	}
++	otx2_dpi_dbg("rawdev %d configured successfully", i);
++
++	/* Each stream allocate its own completion ring data, store it in
++	 * application context. Each stream needs to use same application
++	 * context for enqueue/dequeue.
++	 */
++	cring.compl_data = rte_malloc("dummy", sizeof(void *) * 1024, 128);
++	if (!cring.compl_data) {
++		otx2_dpi_dbg("Completion allocation failed");
++		return -ENOMEM;
++	}
++
++	cring.max_cnt = 1024;
++	cring.head = 0;
++	cring.tail = 0;
++
++	ret = dma_test_internal(i, size);
++	if (ret)
++		otx2_dpi_dbg("DMA transfer failed for queue %d", i);
++
++	if (rte_rawdev_close(i))
++		otx2_dpi_dbg("Dev close failed for port %d", i);
++
++	if (conf.chunk_pool)
++		rte_mempool_free(conf.chunk_pool);
++
++	return ret;
++}
+-- 
+2.14.4
+

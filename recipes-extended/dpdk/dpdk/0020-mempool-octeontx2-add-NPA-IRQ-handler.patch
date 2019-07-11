@@ -1,0 +1,400 @@
+From e0b5ec38e66f2d897296fdfc647424285240d6f3 Mon Sep 17 00:00:00 2001
+From: Jerin Jacob <jerinj@marvell.com>
+Date: Sat, 22 Jun 2019 18:54:09 +0530
+Subject: [PATCH 020/154] mempool/octeontx2: add NPA IRQ handler
+
+Register and implement NPA IRQ handler for RAS and all type of
+error interrupts to get the fatal errors from HW.
+
+Signed-off-by: Jerin Jacob <jerinj@marvell.com>
+Signed-off-by: Harman Kalra <hkalra@marvell.com>
+---
+ drivers/mempool/octeontx2/Makefile           |   3 +-
+ drivers/mempool/octeontx2/meson.build        |   1 +
+ drivers/mempool/octeontx2/otx2_mempool.c     |   6 +
+ drivers/mempool/octeontx2/otx2_mempool.h     |   4 +
+ drivers/mempool/octeontx2/otx2_mempool_irq.c | 302 +++++++++++++++++++++++++++
+ 5 files changed, 315 insertions(+), 1 deletion(-)
+ create mode 100644 drivers/mempool/octeontx2/otx2_mempool_irq.c
+
+diff --git a/drivers/mempool/octeontx2/Makefile b/drivers/mempool/octeontx2/Makefile
+index 6fbb6e291e37..86950b27025b 100644
+--- a/drivers/mempool/octeontx2/Makefile
++++ b/drivers/mempool/octeontx2/Makefile
+@@ -28,7 +28,8 @@ LIBABIVER := 1
+ # all source are stored in SRCS-y
+ #
+ SRCS-$(CONFIG_RTE_LIBRTE_OCTEONTX2_MEMPOOL) += \
+-	otx2_mempool.c
++	otx2_mempool.c 		\
++	otx2_mempool_irq.c
+ 
+ LDLIBS += -lrte_eal -lrte_mempool -lrte_mbuf
+ LDLIBS += -lrte_common_octeontx2 -lrte_kvargs -lrte_bus_pci
+diff --git a/drivers/mempool/octeontx2/meson.build b/drivers/mempool/octeontx2/meson.build
+index ec3c59eefee1..3f93b509dbe9 100644
+--- a/drivers/mempool/octeontx2/meson.build
++++ b/drivers/mempool/octeontx2/meson.build
+@@ -3,6 +3,7 @@
+ #
+ 
+ sources = files('otx2_mempool.c',
++		'otx2_mempool_irq.c',
+ 		)
+ 
+ extra_flags = []
+diff --git a/drivers/mempool/octeontx2/otx2_mempool.c b/drivers/mempool/octeontx2/otx2_mempool.c
+index fa74b753237c..1bcb86cf47dc 100644
+--- a/drivers/mempool/octeontx2/otx2_mempool.c
++++ b/drivers/mempool/octeontx2/otx2_mempool.c
+@@ -195,6 +195,7 @@ otx2_npa_lf_fini(void)
+ 		return -ENOMEM;
+ 
+ 	if (rte_atomic16_add_return(&idev->npa_refcnt, -1) == 0) {
++		otx2_npa_unregister_irqs(idev->npa_lf);
+ 		rc |= npa_lf_fini(idev->npa_lf);
+ 		rc |= npa_lf_detach(idev->npa_lf->mbox);
+ 		otx2_npa_set_defaults(idev);
+@@ -251,6 +252,9 @@ otx2_npa_lf_init(struct rte_pci_device *pci_dev, void *otx2_dev)
+ 		idev->npa_pf_func = dev->pf_func;
+ 		idev->npa_lf = lf;
+ 		rte_smp_wmb();
++		rc = otx2_npa_register_irqs(lf);
++		if (rc)
++			goto npa_fini;
+ 
+ 		rte_mbuf_set_platform_mempool_ops("octeontx2_npa");
+ 		otx2_npa_dbg("npa_lf=%p pools=%d sz=%d pf_func=0x%x msix=0x%x",
+@@ -259,6 +263,8 @@ otx2_npa_lf_init(struct rte_pci_device *pci_dev, void *otx2_dev)
+ 
+ 	return 0;
+ 
++npa_fini:
++	npa_lf_fini(idev->npa_lf);
+ npa_detach:
+ 	npa_lf_detach(dev->mbox);
+ fail:
+diff --git a/drivers/mempool/octeontx2/otx2_mempool.h b/drivers/mempool/octeontx2/otx2_mempool.h
+index 871b45870afd..41542cf899e6 100644
+--- a/drivers/mempool/octeontx2/otx2_mempool.h
++++ b/drivers/mempool/octeontx2/otx2_mempool.h
+@@ -198,4 +198,8 @@ npa_lf_aura_op_range_set(uint64_t aura_handle, uint64_t start_iova,
+ int otx2_npa_lf_init(struct rte_pci_device *pci_dev, void *otx2_dev);
+ int otx2_npa_lf_fini(void);
+ 
++/* IRQ */
++int otx2_npa_register_irqs(struct otx2_npa_lf *lf);
++void otx2_npa_unregister_irqs(struct otx2_npa_lf *lf);
++
+ #endif /* __OTX2_MEMPOOL_H__ */
+diff --git a/drivers/mempool/octeontx2/otx2_mempool_irq.c b/drivers/mempool/octeontx2/otx2_mempool_irq.c
+new file mode 100644
+index 000000000000..c026e1eea2b7
+--- /dev/null
++++ b/drivers/mempool/octeontx2/otx2_mempool_irq.c
+@@ -0,0 +1,302 @@
++/* SPDX-License-Identifier: BSD-3-Clause
++ * Copyright(C) 2019 Marvell International Ltd.
++ */
++
++#include <inttypes.h>
++
++#include <rte_common.h>
++#include <rte_bus_pci.h>
++
++#include "otx2_common.h"
++#include "otx2_irq.h"
++#include "otx2_mempool.h"
++
++static void
++npa_lf_err_irq(void *param)
++{
++	struct otx2_npa_lf *lf = (struct otx2_npa_lf *)param;
++	uint64_t intr;
++
++	intr = otx2_read64(lf->base + NPA_LF_ERR_INT);
++	if (intr == 0)
++		return;
++
++	otx2_err("Err_intr=0x%" PRIx64 "", intr);
++
++	/* Clear interrupt */
++	otx2_write64(intr, lf->base + NPA_LF_ERR_INT);
++}
++
++static int
++npa_lf_register_err_irq(struct otx2_npa_lf *lf)
++{
++	struct rte_intr_handle *handle = lf->intr_handle;
++	int rc, vec;
++
++	vec = lf->npa_msixoff + NPA_LF_INT_VEC_ERR_INT;
++
++	/* Clear err interrupt */
++	otx2_write64(~0ull, lf->base + NPA_LF_ERR_INT_ENA_W1C);
++	/* Register err interrupt vector */
++	rc = otx2_register_irq(handle, npa_lf_err_irq, lf, vec);
++
++	/* Enable hw interrupt */
++	otx2_write64(~0ull, lf->base + NPA_LF_ERR_INT_ENA_W1S);
++
++	return rc;
++}
++
++static void
++npa_lf_unregister_err_irq(struct otx2_npa_lf *lf)
++{
++	struct rte_intr_handle *handle = lf->intr_handle;
++	int vec;
++
++	vec = lf->npa_msixoff + NPA_LF_INT_VEC_ERR_INT;
++
++	/* Clear err interrupt */
++	otx2_write64(~0ull, lf->base + NPA_LF_ERR_INT_ENA_W1C);
++	otx2_unregister_irq(handle, npa_lf_err_irq, lf, vec);
++}
++
++static void
++npa_lf_ras_irq(void *param)
++{
++	struct otx2_npa_lf *lf = (struct otx2_npa_lf *)param;
++	uint64_t intr;
++
++	intr = otx2_read64(lf->base + NPA_LF_RAS);
++	if (intr == 0)
++		return;
++
++	otx2_err("Ras_intr=0x%" PRIx64 "", intr);
++
++	/* Clear interrupt */
++	otx2_write64(intr, lf->base + NPA_LF_RAS);
++}
++
++static int
++npa_lf_register_ras_irq(struct otx2_npa_lf *lf)
++{
++	struct rte_intr_handle *handle = lf->intr_handle;
++	int rc, vec;
++
++	vec = lf->npa_msixoff + NPA_LF_INT_VEC_POISON;
++
++	/* Clear err interrupt */
++	otx2_write64(~0ull, lf->base + NPA_LF_RAS_ENA_W1C);
++	/* Set used interrupt vectors */
++	rc = otx2_register_irq(handle, npa_lf_ras_irq, lf, vec);
++	/* Enable hw interrupt */
++	otx2_write64(~0ull, lf->base + NPA_LF_RAS_ENA_W1S);
++
++	return rc;
++}
++
++static void
++npa_lf_unregister_ras_irq(struct otx2_npa_lf *lf)
++{
++	int vec;
++	struct rte_intr_handle *handle = lf->intr_handle;
++
++	vec = lf->npa_msixoff + NPA_LF_INT_VEC_POISON;
++
++	/* Clear err interrupt */
++	otx2_write64(~0ull, lf->base + NPA_LF_RAS_ENA_W1C);
++	otx2_unregister_irq(handle, npa_lf_ras_irq, lf, vec);
++}
++
++static inline uint8_t
++npa_lf_q_irq_get_and_clear(struct otx2_npa_lf *lf, uint32_t q,
++			uint32_t off, uint64_t mask)
++{
++	uint64_t reg, wdata;
++	uint8_t qint;
++
++	wdata = (uint64_t)q << 44;
++	reg = otx2_atomic64_add_nosync(wdata, (int64_t *)(lf->base + off));
++
++	if (reg & BIT_ULL(42) /* OP_ERR */) {
++		otx2_err("Failed execute irq get off=0x%x", off);
++		return 0;
++	}
++
++	qint = reg & 0xff;
++	wdata &= mask;
++	otx2_write64(wdata, lf->base + off);
++
++	return qint;
++}
++
++static inline uint8_t
++npa_lf_pool_irq_get_and_clear(struct otx2_npa_lf *lf, uint32_t p)
++{
++	return npa_lf_q_irq_get_and_clear(lf, p, NPA_LF_POOL_OP_INT, ~0xff00);
++}
++
++static inline uint8_t
++npa_lf_aura_irq_get_and_clear(struct otx2_npa_lf *lf, uint32_t a)
++{
++	return npa_lf_q_irq_get_and_clear(lf, a, NPA_LF_AURA_OP_INT, ~0xff00);
++}
++
++static void
++npa_lf_q_irq(void *param)
++{
++	struct otx2_npa_qint *qint = (struct otx2_npa_qint *)param;
++	struct otx2_npa_lf *lf = qint->lf;
++	uint8_t irq, qintx = qint->qintx;
++	uint32_t q, pool, aura;
++	uint64_t intr;
++
++	intr = otx2_read64(lf->base + NPA_LF_QINTX_INT(qintx));
++	if (intr == 0)
++		return;
++
++	otx2_err("queue_intr=0x%" PRIx64 " qintx=%d", intr, qintx);
++
++	/* Handle pool queue interrupts */
++	for (q = 0; q < lf->nr_pools; q++) {
++		/* Skip disabled POOL */
++		if (rte_bitmap_get(lf->npa_bmp, q))
++			continue;
++
++		pool = q % lf->qints;
++		irq = npa_lf_pool_irq_get_and_clear(lf, pool);
++
++		if (irq & BIT_ULL(NPA_POOL_ERR_INT_OVFLS))
++			otx2_err("Pool=%d NPA_POOL_ERR_INT_OVFLS", pool);
++
++		if (irq & BIT_ULL(NPA_POOL_ERR_INT_RANGE))
++			otx2_err("Pool=%d NPA_POOL_ERR_INT_RANGE", pool);
++
++		if (irq & BIT_ULL(NPA_POOL_ERR_INT_PERR))
++			otx2_err("Pool=%d NPA_POOL_ERR_INT_PERR", pool);
++	}
++
++	/* Handle aura queue interrupts */
++	for (q = 0; q < lf->nr_pools; q++) {
++
++		/* Skip disabled AURA */
++		if (rte_bitmap_get(lf->npa_bmp, q))
++			continue;
++
++		aura = q % lf->qints;
++		irq = npa_lf_aura_irq_get_and_clear(lf, aura);
++
++		if (irq & BIT_ULL(NPA_AURA_ERR_INT_AURA_ADD_OVER))
++			otx2_err("Aura=%d NPA_AURA_ERR_INT_ADD_OVER", aura);
++
++		if (irq & BIT_ULL(NPA_AURA_ERR_INT_AURA_ADD_UNDER))
++			otx2_err("Aura=%d NPA_AURA_ERR_INT_ADD_UNDER", aura);
++
++		if (irq & BIT_ULL(NPA_AURA_ERR_INT_AURA_FREE_UNDER))
++			otx2_err("Aura=%d NPA_AURA_ERR_INT_FREE_UNDER", aura);
++
++		if (irq & BIT_ULL(NPA_AURA_ERR_INT_POOL_DIS))
++			otx2_err("Aura=%d NPA_AURA_ERR_POOL_DIS", aura);
++	}
++
++	/* Clear interrupt */
++	otx2_write64(intr, lf->base + NPA_LF_QINTX_INT(qintx));
++}
++
++static int
++npa_lf_register_queue_irqs(struct otx2_npa_lf *lf)
++{
++	struct rte_intr_handle *handle = lf->intr_handle;
++	int vec, q, qs, rc = 0;
++
++	/* Figure out max qintx required */
++	qs = RTE_MIN(lf->qints, lf->nr_pools);
++
++	for (q = 0; q < qs; q++) {
++		vec = lf->npa_msixoff + NPA_LF_INT_VEC_QINT_START + q;
++
++		/* Clear QINT CNT */
++		otx2_write64(0, lf->base + NPA_LF_QINTX_CNT(q));
++
++		/* Clear interrupt */
++		otx2_write64(~0ull, lf->base + NPA_LF_QINTX_ENA_W1C(q));
++
++		struct otx2_npa_qint *qintmem = lf->npa_qint_mem;
++		qintmem += q;
++
++		qintmem->lf = lf;
++		qintmem->qintx = q;
++
++		/* Sync qints_mem update */
++		rte_smp_wmb();
++
++		/* Register queue irq vector */
++		rc = otx2_register_irq(handle, npa_lf_q_irq, qintmem, vec);
++		if (rc)
++			break;
++
++		otx2_write64(0, lf->base + NPA_LF_QINTX_CNT(q));
++		otx2_write64(0, lf->base + NPA_LF_QINTX_INT(q));
++		/* Enable QINT interrupt */
++		otx2_write64(~0ull, lf->base + NPA_LF_QINTX_ENA_W1S(q));
++	}
++
++	return rc;
++}
++
++static void
++npa_lf_unregister_queue_irqs(struct otx2_npa_lf *lf)
++{
++	struct rte_intr_handle *handle = lf->intr_handle;
++	int vec, q, qs;
++
++	/* Figure out max qintx required */
++	qs = RTE_MIN(lf->qints, lf->nr_pools);
++
++	for (q = 0; q < qs; q++) {
++		vec = lf->npa_msixoff + NPA_LF_INT_VEC_QINT_START + q;
++
++		/* Clear QINT CNT */
++		otx2_write64(0, lf->base + NPA_LF_QINTX_CNT(q));
++		otx2_write64(0, lf->base + NPA_LF_QINTX_INT(q));
++
++		/* Clear interrupt */
++		otx2_write64(~0ull, lf->base + NPA_LF_QINTX_ENA_W1C(q));
++
++		struct otx2_npa_qint *qintmem = lf->npa_qint_mem;
++		qintmem += q;
++
++		/* Unregister queue irq vector */
++		otx2_unregister_irq(handle, npa_lf_q_irq, qintmem, vec);
++
++		qintmem->lf = NULL;
++		qintmem->qintx = 0;
++	}
++}
++
++int
++otx2_npa_register_irqs(struct otx2_npa_lf *lf)
++{
++	int rc;
++
++	if (lf->npa_msixoff == MSIX_VECTOR_INVALID) {
++		otx2_err("Invalid NPALF MSIX vector offset vector: 0x%x",
++			lf->npa_msixoff);
++		return -EINVAL;
++	}
++
++	/* Register lf err interrupt */
++	rc = npa_lf_register_err_irq(lf);
++	/* Register RAS interrupt */
++	rc |= npa_lf_register_ras_irq(lf);
++	/* Register queue interrupts */
++	rc |= npa_lf_register_queue_irqs(lf);
++
++	return rc;
++}
++
++void
++otx2_npa_unregister_irqs(struct otx2_npa_lf *lf)
++{
++	npa_lf_unregister_err_irq(lf);
++	npa_lf_unregister_ras_irq(lf);
++	npa_lf_unregister_queue_irqs(lf);
++}
+-- 
+2.14.4
+

@@ -1,0 +1,348 @@
+From 991fda82cb08b22f408d599e678a043500cdba9d Mon Sep 17 00:00:00 2001
+From: Vivek Sharma <viveksharma@marvell.com>
+Date: Sun, 30 Jun 2019 06:55:08 +0530
+Subject: [PATCH 125/154] net/octeontx2: implement VLAN utility functions
+
+Implement accessory functions needed for VLAN functionality.
+Introduce VLAN related structures as well.
+
+Signed-off-by: Vivek Sharma <viveksharma@marvell.com>
+Acked-by: Jerin Jacob <jerinj@marvell.com>
+---
+ drivers/net/octeontx2/Makefile      |   1 +
+ drivers/net/octeontx2/meson.build   |   1 +
+ drivers/net/octeontx2/otx2_ethdev.c |  10 ++
+ drivers/net/octeontx2/otx2_ethdev.h |  46 +++++++++
+ drivers/net/octeontx2/otx2_vlan.c   | 190 ++++++++++++++++++++++++++++++++++++
+ 5 files changed, 248 insertions(+)
+ create mode 100644 drivers/net/octeontx2/otx2_vlan.c
+
+diff --git a/drivers/net/octeontx2/Makefile b/drivers/net/octeontx2/Makefile
+index c6a3e925e526..0b2c4158fb3b 100644
+--- a/drivers/net/octeontx2/Makefile
++++ b/drivers/net/octeontx2/Makefile
+@@ -37,6 +37,7 @@ SRCS-$(CONFIG_RTE_LIBRTE_OCTEONTX2_PMD) += \
+ 	otx2_ptp.c	\
+ 	otx2_flow.c	\
+ 	otx2_link.c	\
++	otx2_vlan.c	\
+ 	otx2_stats.c	\
+ 	otx2_lookup.c	\
+ 	otx2_ethdev.c	\
+diff --git a/drivers/net/octeontx2/meson.build b/drivers/net/octeontx2/meson.build
+index f0e03bffef7d..6281ee21b26c 100644
+--- a/drivers/net/octeontx2/meson.build
++++ b/drivers/net/octeontx2/meson.build
+@@ -9,6 +9,7 @@ sources = files(
+ 		'otx2_ptp.c',
+ 		'otx2_flow.c',
+ 		'otx2_link.c',
++		'otx2_vlan.c',
+ 		'otx2_stats.c',
+ 		'otx2_lookup.c',
+ 		'otx2_ethdev.c',
+diff --git a/drivers/net/octeontx2/otx2_ethdev.c b/drivers/net/octeontx2/otx2_ethdev.c
+index 62d5ee6302bc..2deaf1a90730 100644
+--- a/drivers/net/octeontx2/otx2_ethdev.c
++++ b/drivers/net/octeontx2/otx2_ethdev.c
+@@ -1102,6 +1102,7 @@ otx2_nix_configure(struct rte_eth_dev *eth_dev)
+ 	/* Free the resources allocated from the previous configure */
+ 	if (dev->configured == 1) {
+ 		otx2_nix_rxchan_bpid_cfg(eth_dev, false);
++		otx2_nix_vlan_fini(eth_dev);
+ 		oxt2_nix_unregister_queue_irqs(eth_dev);
+ 		nix_set_nop_rxtx_function(eth_dev);
+ 		rc = nix_store_queue_cfg_and_then_release(eth_dev);
+@@ -1148,6 +1149,12 @@ otx2_nix_configure(struct rte_eth_dev *eth_dev)
+ 		goto free_nix_lf;
+ 	}
+ 
++	rc = otx2_nix_vlan_offload_init(eth_dev);
++	if (rc) {
++		otx2_err("Failed to init vlan offload rc=%d", rc);
++		goto free_nix_lf;
++	}
++
+ 	/* Register queue IRQs */
+ 	rc = oxt2_nix_register_queue_irqs(eth_dev);
+ 	if (rc) {
+@@ -1566,6 +1573,9 @@ otx2_eth_dev_uninit(struct rte_eth_dev *eth_dev, bool mbox_close)
+ 	/* Disable nix bpid config */
+ 	otx2_nix_rxchan_bpid_cfg(eth_dev, false);
+ 
++	/* Disable vlan offloads */
++	otx2_nix_vlan_fini(eth_dev);
++
+ 	/* Disable other rte_flow entries */
+ 	otx2_flow_fini(dev);
+ 
+diff --git a/drivers/net/octeontx2/otx2_ethdev.h b/drivers/net/octeontx2/otx2_ethdev.h
+index ad12f2553592..8577272b4683 100644
+--- a/drivers/net/octeontx2/otx2_ethdev.h
++++ b/drivers/net/octeontx2/otx2_ethdev.h
+@@ -182,6 +182,47 @@ struct otx2_fc_info {
+ 	uint16_t bpid[NIX_MAX_CHAN];
+ };
+ 
++struct vlan_mkex_info {
++	struct npc_xtract_info la_xtract;
++	struct npc_xtract_info lb_xtract;
++	uint64_t lb_lt_offset;
++};
++
++struct vlan_entry {
++	uint32_t mcam_idx;
++	uint16_t vlan_id;
++	TAILQ_ENTRY(vlan_entry) next;
++};
++
++TAILQ_HEAD(otx2_vlan_filter_tbl, vlan_entry);
++
++struct otx2_vlan_info {
++	struct otx2_vlan_filter_tbl fltr_tbl;
++	/* MKEX layer info */
++	struct mcam_entry def_tx_mcam_ent;
++	struct mcam_entry def_rx_mcam_ent;
++	struct vlan_mkex_info mkex;
++	/* Default mcam entry that matches vlan packets */
++	uint32_t def_rx_mcam_idx;
++	uint32_t def_tx_mcam_idx;
++	/* MCAM entry that matches double vlan packets */
++	uint32_t qinq_mcam_idx;
++	/* Indices of tx_vtag def registers */
++	uint32_t outer_vlan_idx;
++	uint32_t inner_vlan_idx;
++	uint16_t outer_vlan_tpid;
++	uint16_t inner_vlan_tpid;
++	uint16_t pvid;
++	/* QinQ entry allocated before default one */
++	uint8_t qinq_before_def;
++	uint8_t pvid_insert_on;
++	/* Rx vtag action type */
++	uint8_t vtag_type_idx;
++	uint8_t filter_on;
++	uint8_t strip_on;
++	uint8_t qinq_on;
++};
++
+ struct otx2_eth_dev {
+ 	OTX2_DEV; /* Base class */
+ 	MARKER otx2_eth_dev_data_start;
+@@ -233,6 +274,7 @@ struct otx2_eth_dev {
+ 	uint32_t txmap[RTE_ETHDEV_QUEUE_STAT_CNTRS];
+ 	uint32_t rxmap[RTE_ETHDEV_QUEUE_STAT_CNTRS];
+ 	struct otx2_npc_flow_info npc_flow;
++	struct otx2_vlan_info vlan_info;
+ 	struct otx2_eth_qconf *tx_qconf;
+ 	struct otx2_eth_qconf *rx_qconf;
+ 	struct rte_eth_dev *eth_dev;
+@@ -402,6 +444,10 @@ int otx2_nix_rxchan_bpid_cfg(struct rte_eth_dev *eth_dev, bool enb);
+ 
+ int otx2_nix_update_flow_ctrl_mode(struct rte_eth_dev *eth_dev);
+ 
++/* VLAN */
++int otx2_nix_vlan_offload_init(struct rte_eth_dev *eth_dev);
++int otx2_nix_vlan_fini(struct rte_eth_dev *eth_dev);
++
+ /* Lookup configuration */
+ void *otx2_nix_fastpath_lookup_mem_get(void);
+ 
+diff --git a/drivers/net/octeontx2/otx2_vlan.c b/drivers/net/octeontx2/otx2_vlan.c
+new file mode 100644
+index 000000000000..b3136d2cfb63
+--- /dev/null
++++ b/drivers/net/octeontx2/otx2_vlan.c
+@@ -0,0 +1,190 @@
++/* SPDX-License-Identifier: BSD-3-Clause
++ * Copyright(C) 2019 Marvell International Ltd.
++ */
++
++#include <rte_malloc.h>
++#include <rte_tailq.h>
++
++#include "otx2_ethdev.h"
++#include "otx2_flow.h"
++
++
++#define VLAN_ID_MATCH	0x1
++#define VTAG_F_MATCH	0x2
++#define MAC_ADDR_MATCH	0x4
++#define QINQ_F_MATCH	0x8
++#define VLAN_DROP	0x10
++
++enum vtag_cfg_dir {
++	VTAG_TX,
++	VTAG_RX
++};
++
++static int
++__rte_unused nix_vlan_mcam_enb_dis(struct otx2_eth_dev *dev,
++				   uint32_t entry, const int enable)
++{
++	struct npc_mcam_ena_dis_entry_req *req;
++	struct otx2_mbox *mbox = dev->mbox;
++	int rc = -EINVAL;
++
++	if (enable)
++		req = otx2_mbox_alloc_msg_npc_mcam_ena_entry(mbox);
++	else
++		req = otx2_mbox_alloc_msg_npc_mcam_dis_entry(mbox);
++
++	req->entry = entry;
++
++	rc = otx2_mbox_process_msg(mbox, NULL);
++	return rc;
++}
++
++static int
++__rte_unused nix_vlan_mcam_free(struct otx2_eth_dev *dev, uint32_t entry)
++{
++	struct npc_mcam_free_entry_req *req;
++	struct otx2_mbox *mbox = dev->mbox;
++	int rc = -EINVAL;
++
++	req = otx2_mbox_alloc_msg_npc_mcam_free_entry(mbox);
++	req->entry = entry;
++
++	rc = otx2_mbox_process_msg(mbox, NULL);
++	return rc;
++}
++
++static int
++__rte_unused nix_vlan_mcam_write(struct rte_eth_dev *eth_dev, uint16_t ent_idx,
++				 struct mcam_entry *entry, uint8_t intf)
++{
++	struct otx2_eth_dev *dev = otx2_eth_pmd_priv(eth_dev);
++	struct npc_mcam_write_entry_req *req;
++	struct otx2_mbox *mbox = dev->mbox;
++	struct msghdr *rsp;
++	int rc = -EINVAL;
++
++	req = otx2_mbox_alloc_msg_npc_mcam_write_entry(mbox);
++
++	req->entry = ent_idx;
++	req->intf = intf;
++	req->enable_entry = 1;
++	memcpy(&req->entry_data, entry, sizeof(struct mcam_entry));
++
++	rc = otx2_mbox_process_msg(mbox, (void *)&rsp);
++	return rc;
++}
++
++static int
++__rte_unused nix_vlan_mcam_alloc_and_write(struct rte_eth_dev *eth_dev,
++					   struct mcam_entry *entry,
++					   uint8_t intf, bool drop)
++{
++	struct otx2_eth_dev *dev = otx2_eth_pmd_priv(eth_dev);
++	struct npc_mcam_alloc_and_write_entry_req *req;
++	struct npc_mcam_alloc_and_write_entry_rsp *rsp;
++	struct otx2_mbox *mbox = dev->mbox;
++	int rc = -EINVAL;
++
++	req = otx2_mbox_alloc_msg_npc_mcam_alloc_and_write_entry(mbox);
++
++	if (intf == NPC_MCAM_RX) {
++		if (!drop && dev->vlan_info.def_rx_mcam_idx) {
++			req->priority = NPC_MCAM_HIGHER_PRIO;
++			req->ref_entry = dev->vlan_info.def_rx_mcam_idx;
++		} else if (drop && dev->vlan_info.qinq_mcam_idx) {
++			req->priority = NPC_MCAM_LOWER_PRIO;
++			req->ref_entry = dev->vlan_info.qinq_mcam_idx;
++		} else {
++			req->priority = NPC_MCAM_ANY_PRIO;
++			req->ref_entry = 0;
++		}
++	} else {
++		req->priority = NPC_MCAM_ANY_PRIO;
++		req->ref_entry = 0;
++	}
++
++	req->intf = intf;
++	req->enable_entry = 1;
++	memcpy(&req->entry_data, entry, sizeof(struct mcam_entry));
++
++	rc = otx2_mbox_process_msg(mbox, (void *)&rsp);
++	if (rc)
++		return rc;
++
++	return rsp->entry;
++}
++
++static int
++nix_vlan_rx_mkex_offset(uint64_t mask)
++{
++	int nib_count = 0;
++
++	while (mask) {
++		nib_count += mask & 1;
++		mask >>= 1;
++	}
++
++	return nib_count * 4;
++}
++
++static int
++nix_vlan_get_mkex_info(struct otx2_eth_dev *dev)
++{
++	struct vlan_mkex_info *mkex = &dev->vlan_info.mkex;
++	struct otx2_npc_flow_info *npc = &dev->npc_flow;
++	struct npc_xtract_info *x_info = NULL;
++	uint64_t rx_keyx;
++	otx2_dxcfg_t *p;
++	int rc = -EINVAL;
++
++	if (npc == NULL) {
++		otx2_err("Missing npc mkex configuration");
++		return rc;
++	}
++
++#define NPC_KEX_CHAN_NIBBLE_ENA			0x7ULL
++#define NPC_KEX_LB_LTYPE_NIBBLE_ENA		0x1000ULL
++#define NPC_KEX_LB_LTYPE_NIBBLE_MASK		0xFFFULL
++
++	rx_keyx = npc->keyx_supp_nmask[NPC_MCAM_RX];
++	if ((rx_keyx & NPC_KEX_CHAN_NIBBLE_ENA) != NPC_KEX_CHAN_NIBBLE_ENA)
++		return rc;
++
++	if ((rx_keyx & NPC_KEX_LB_LTYPE_NIBBLE_ENA) !=
++	    NPC_KEX_LB_LTYPE_NIBBLE_ENA)
++		return rc;
++
++	mkex->lb_lt_offset =
++	    nix_vlan_rx_mkex_offset(rx_keyx & NPC_KEX_LB_LTYPE_NIBBLE_MASK);
++
++	p = &npc->prx_dxcfg;
++	x_info = &(*p)[NPC_MCAM_RX][NPC_LID_LA][NPC_LT_LA_ETHER].xtract[0];
++	memcpy(&mkex->la_xtract, x_info, sizeof(struct npc_xtract_info));
++	x_info = &(*p)[NPC_MCAM_RX][NPC_LID_LB][NPC_LT_LB_CTAG].xtract[0];
++	memcpy(&mkex->lb_xtract, x_info, sizeof(struct npc_xtract_info));
++
++	return 0;
++}
++
++int
++otx2_nix_vlan_offload_init(struct rte_eth_dev *eth_dev)
++{
++	struct otx2_eth_dev *dev = otx2_eth_pmd_priv(eth_dev);
++	int rc;
++
++	/* Port initialized for first time or restarted */
++	if (!dev->configured) {
++		rc = nix_vlan_get_mkex_info(dev);
++		if (rc) {
++			otx2_err("Failed to get vlan mkex info rc=%d", rc);
++			return rc;
++		}
++	}
++	return 0;
++}
++
++int
++otx2_nix_vlan_fini(__rte_unused struct rte_eth_dev *eth_dev)
++{
++	return 0;
++}
+-- 
+2.14.4
+

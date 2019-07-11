@@ -1,0 +1,58 @@
+From c91273de950aa89bfb4406ca6a873106295d1301 Mon Sep 17 00:00:00 2001
+From: Pavan Nikhilesh <pbhagavatula@marvell.com>
+Date: Fri, 28 Jun 2019 23:53:21 +0530
+Subject: [PATCH 040/154] event/octeontx2: support dequeue timeout tick
+ conversion
+
+Add function to convert dequeue timeout from ns to ticks.
+
+Signed-off-by: Pavan Nikhilesh <pbhagavatula@marvell.com>
+---
+ drivers/event/octeontx2/otx2_evdev.c | 11 +++++++++++
+ drivers/event/octeontx2/otx2_evdev.h |  1 +
+ 2 files changed, 12 insertions(+)
+
+diff --git a/drivers/event/octeontx2/otx2_evdev.c b/drivers/event/octeontx2/otx2_evdev.c
+index 53e68902a961..ef6693bc5e0c 100644
+--- a/drivers/event/octeontx2/otx2_evdev.c
++++ b/drivers/event/octeontx2/otx2_evdev.c
+@@ -635,6 +635,16 @@ otx2_sso_port_setup(struct rte_eventdev *event_dev, uint8_t port_id,
+ 	return 0;
+ }
+ 
++static int
++otx2_sso_timeout_ticks(struct rte_eventdev *event_dev, uint64_t ns,
++		       uint64_t *tmo_ticks)
++{
++	RTE_SET_USED(event_dev);
++	*tmo_ticks = NSEC2TICK(ns, rte_get_timer_hz());
++
++	return 0;
++}
++
+ /* Initialize and register event driver with DPDK Application */
+ static struct rte_eventdev_ops otx2_sso_ops = {
+ 	.dev_infos_get    = otx2_sso_info_get,
+@@ -647,6 +657,7 @@ static struct rte_eventdev_ops otx2_sso_ops = {
+ 	.port_release     = otx2_sso_port_release,
+ 	.port_link        = otx2_sso_port_link,
+ 	.port_unlink      = otx2_sso_port_unlink,
++	.timeout_ticks    = otx2_sso_timeout_ticks,
+ };
+ 
+ #define OTX2_SSO_XAE_CNT	"xae_cnt"
+diff --git a/drivers/event/octeontx2/otx2_evdev.h b/drivers/event/octeontx2/otx2_evdev.h
+index 3f4931ff189c..1a9de1b8635a 100644
+--- a/drivers/event/octeontx2/otx2_evdev.h
++++ b/drivers/event/octeontx2/otx2_evdev.h
+@@ -75,6 +75,7 @@
+ 
+ #define NSEC2USEC(__ns)			((__ns) / 1E3)
+ #define USEC2NSEC(__us)                 ((__us) * 1E3)
++#define NSEC2TICK(__ns, __freq)		(((__ns) * (__freq)) / 1E9)
+ 
+ enum otx2_sso_lf_type {
+ 	SSO_LF_GGRP,
+-- 
+2.14.4
+

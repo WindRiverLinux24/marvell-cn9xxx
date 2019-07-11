@@ -1,0 +1,52 @@
+From 090d76aa9f35ca5b2bdc1ba8e7c3a8dd5e3d318a Mon Sep 17 00:00:00 2001
+From: Amit Gupta <agupta3@marvell.com>
+Date: Mon, 1 Jul 2019 23:33:46 +0530
+Subject: [PATCH 073/154] drivers/octeontx2: fix icc build for i686
+
+Fix the following ICC specific compilation issue with i686 build.
+
+dpdk/drivers/common/octeontx2/otx2_mbox.c(47): error #2259:
+non-pointer conversion from "unsigned long long" to "struct mbox_hdr *"
+may lose significant bits
+(struct mbox_hdr *)((uintptr_t)mdev->mbase + mbox->tx_start);
+
+Fixes: 732377a6792e ("mempool/octeontx2: add build infra and device probe")
+Fixes: 371d3212cbed ("common/octeontx2: add build infrastructure and HW definition")
+
+Signed-off-by: Amit Gupta <agupta3@marvell.com>
+---
+ drivers/common/octeontx2/Makefile  | 3 +++
+ drivers/mempool/octeontx2/Makefile | 3 +++
+ 2 files changed, 6 insertions(+)
+
+diff --git a/drivers/common/octeontx2/Makefile b/drivers/common/octeontx2/Makefile
+index fabc3253712d..afe570817c54 100644
+--- a/drivers/common/octeontx2/Makefile
++++ b/drivers/common/octeontx2/Makefile
+@@ -17,6 +17,9 @@ CFLAGS += -I$(RTE_SDK)/drivers/bus/pci
+ ifneq ($(CONFIG_RTE_ARCH_64),y)
+ CFLAGS += -Wno-int-to-pointer-cast
+ CFLAGS += -Wno-pointer-to-int-cast
++ifeq ($(CONFIG_RTE_TOOLCHAIN_ICC),y)
++CFLAGS += -diag-disable 2259
++endif
+ endif
+ 
+ EXPORT_MAP := rte_common_octeontx2_version.map
+diff --git a/drivers/mempool/octeontx2/Makefile b/drivers/mempool/octeontx2/Makefile
+index b3568443e1cf..87cce22c63e4 100644
+--- a/drivers/mempool/octeontx2/Makefile
++++ b/drivers/mempool/octeontx2/Makefile
+@@ -18,6 +18,9 @@ CFLAGS += -O3
+ ifneq ($(CONFIG_RTE_ARCH_64),y)
+ CFLAGS += -Wno-int-to-pointer-cast
+ CFLAGS += -Wno-pointer-to-int-cast
++ifeq ($(CONFIG_RTE_TOOLCHAIN_ICC),y)
++CFLAGS += -diag-disable 2259
++endif
+ endif
+ 
+ EXPORT_MAP := rte_mempool_octeontx2_version.map
+-- 
+2.14.4
+

@@ -1,0 +1,38 @@
+From 326998fdd3694fe9860eeab17cb862547f1b7cb4 Mon Sep 17 00:00:00 2001
+From: Jerin Jacob <jerinj@marvell.com>
+Date: Tue, 26 Feb 2019 12:29:20 +0000
+Subject: [PATCH 154/154] usertools: add octeontx2 SSO and NPA PCIe devices
+
+Add the Marvell's octeontx2's SSO and NPA PCIe devices as
+eventdev, mempool devices in devbind script.
+
+Signed-off-by: Jerin Jacob <jerinj@marvell.com>
+---
+ usertools/dpdk-devbind.py | 9 +++++++--
+ 1 file changed, 7 insertions(+), 2 deletions(-)
+
+diff --git a/usertools/dpdk-devbind.py b/usertools/dpdk-devbind.py
+index a9cd66a780fe..249b65ac383e 100755
+--- a/usertools/dpdk-devbind.py
++++ b/usertools/dpdk-devbind.py
+@@ -29,10 +29,15 @@
+ avp_vnic = {'Class': '05', 'Vendor': '1af4', 'Device': '1110',
+               'SVendor': None, 'SDevice': None}
+ 
++octeontx2_sso = {'Class': '08', 'Vendor': '177d', 'Device': 'a0f9,a0fa',
++              'SVendor': None, 'SDevice': None}
++octeontx2_npa = {'Class': '08', 'Vendor': '177d', 'Device': 'a0fb,a0fc',
++              'SVendor': None, 'SDevice': None}
++
+ network_devices = [network_class, cavium_pkx, avp_vnic]
+ crypto_devices = [encryption_class, intel_processor_class]
+-eventdev_devices = [cavium_sso, cavium_tim]
+-mempool_devices = [cavium_fpa]
++eventdev_devices = [cavium_sso, cavium_tim, octeontx2_sso]
++mempool_devices = [cavium_fpa, octeontx2_npa]
+ compress_devices = [cavium_zip]
+ 
+ # global dict ethernet devices present. Dictionary indexed by PCI address.
+-- 
+2.14.4
+

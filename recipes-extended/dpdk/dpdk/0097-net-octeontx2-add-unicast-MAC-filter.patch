@@ -1,0 +1,179 @@
+From 571ec397bb3942254bfea9421d74c7ce544addf0 Mon Sep 17 00:00:00 2001
+From: Sunil Kumar Kori <skori@marvell.com>
+Date: Wed, 29 May 2019 16:51:55 +0530
+Subject: [PATCH 097/154] net/octeontx2: add unicast MAC filter
+
+Add unicast MAC filter for PF device and
+update the respective feature list.
+
+Signed-off-by: Sunil Kumar Kori <skori@marvell.com>
+Signed-off-by: Vamsi Attunuru <vattunuru@marvell.com>
+Acked-by: Jerin Jacob <jerinj@marvell.com>
+---
+ doc/guides/nics/features/octeontx2.ini     |  1 +
+ doc/guides/nics/features/octeontx2_vec.ini |  1 +
+ doc/guides/nics/octeontx2.rst              |  1 +
+ drivers/net/octeontx2/otx2_ethdev.c        |  3 ++
+ drivers/net/octeontx2/otx2_ethdev.h        |  6 +++
+ drivers/net/octeontx2/otx2_mac.c           | 77 ++++++++++++++++++++++++++++++
+ 6 files changed, 89 insertions(+)
+
+diff --git a/doc/guides/nics/features/octeontx2.ini b/doc/guides/nics/features/octeontx2.ini
+index 9f682609d1c5..5664961135c9 100644
+--- a/doc/guides/nics/features/octeontx2.ini
++++ b/doc/guides/nics/features/octeontx2.ini
+@@ -12,6 +12,7 @@ Link status          = Y
+ Link status event    = Y
+ Promiscuous mode     = Y
+ Allmulticast mode    = Y
++Unicast MAC filter   = Y
+ Basic stats          = Y
+ Stats per queue      = Y
+ Extended stats       = Y
+diff --git a/doc/guides/nics/features/octeontx2_vec.ini b/doc/guides/nics/features/octeontx2_vec.ini
+index 764e95ce683d..195a48940b69 100644
+--- a/doc/guides/nics/features/octeontx2_vec.ini
++++ b/doc/guides/nics/features/octeontx2_vec.ini
+@@ -12,6 +12,7 @@ Link status          = Y
+ Link status event    = Y
+ Promiscuous mode     = Y
+ Allmulticast mode    = Y
++Unicast MAC filter   = Y
+ Basic stats          = Y
+ Extended stats       = Y
+ Stats per queue      = Y
+diff --git a/doc/guides/nics/octeontx2.rst b/doc/guides/nics/octeontx2.rst
+index 9ef7be08f962..8385c9c18f2e 100644
+--- a/doc/guides/nics/octeontx2.rst
++++ b/doc/guides/nics/octeontx2.rst
+@@ -19,6 +19,7 @@ Features of the OCTEON TX2 Ethdev PMD are:
+ - Promiscuous mode
+ - SR-IOV VF
+ - Lock-free Tx queue
++- MAC filtering
+ - Port hardware statistics
+ - Link state information
+ - Debug utilities - Context dump and error interrupt support
+diff --git a/drivers/net/octeontx2/otx2_ethdev.c b/drivers/net/octeontx2/otx2_ethdev.c
+index 826ce7f4e771..a72c901f4f2b 100644
+--- a/drivers/net/octeontx2/otx2_ethdev.c
++++ b/drivers/net/octeontx2/otx2_ethdev.c
+@@ -237,6 +237,9 @@ static const struct eth_dev_ops otx2_eth_dev_ops = {
+ 	.stats_get                = otx2_nix_dev_stats_get,
+ 	.stats_reset              = otx2_nix_dev_stats_reset,
+ 	.get_reg                  = otx2_nix_dev_get_reg,
++	.mac_addr_add             = otx2_nix_mac_addr_add,
++	.mac_addr_remove          = otx2_nix_mac_addr_del,
++	.mac_addr_set             = otx2_nix_mac_addr_set,
+ 	.promiscuous_enable       = otx2_nix_promisc_enable,
+ 	.promiscuous_disable      = otx2_nix_promisc_disable,
+ 	.allmulticast_enable      = otx2_nix_allmulticast_enable,
+diff --git a/drivers/net/octeontx2/otx2_ethdev.h b/drivers/net/octeontx2/otx2_ethdev.h
+index 814fd6ec3d34..56517845bd43 100644
+--- a/drivers/net/octeontx2/otx2_ethdev.h
++++ b/drivers/net/octeontx2/otx2_ethdev.h
+@@ -232,7 +232,13 @@ int otx2_cgx_mac_addr_set(struct rte_eth_dev *eth_dev,
+ 			  struct rte_ether_addr *addr);
+ 
+ /* Mac address handling */
++int otx2_nix_mac_addr_set(struct rte_eth_dev *eth_dev,
++			  struct rte_ether_addr *addr);
+ int otx2_nix_mac_addr_get(struct rte_eth_dev *eth_dev, uint8_t *addr);
++int otx2_nix_mac_addr_add(struct rte_eth_dev *eth_dev,
++			  struct rte_ether_addr *addr,
++			  uint32_t index, uint32_t pool);
++void otx2_nix_mac_addr_del(struct rte_eth_dev *eth_dev, uint32_t index);
+ int otx2_cgx_mac_max_entries_get(struct otx2_eth_dev *dev);
+ 
+ /* Devargs */
+diff --git a/drivers/net/octeontx2/otx2_mac.c b/drivers/net/octeontx2/otx2_mac.c
+index 89b0ca6b0196..b4bcc61f87de 100644
+--- a/drivers/net/octeontx2/otx2_mac.c
++++ b/drivers/net/octeontx2/otx2_mac.c
+@@ -49,6 +49,83 @@ otx2_cgx_mac_max_entries_get(struct otx2_eth_dev *dev)
+ 	return rsp->max_dmac_filters;
+ }
+ 
++int
++otx2_nix_mac_addr_add(struct rte_eth_dev *eth_dev, struct rte_ether_addr *addr,
++		      uint32_t index __rte_unused, uint32_t pool __rte_unused)
++{
++	struct otx2_eth_dev *dev = otx2_eth_pmd_priv(eth_dev);
++	struct otx2_mbox *mbox = dev->mbox;
++	struct cgx_mac_addr_add_req *req;
++	struct cgx_mac_addr_add_rsp *rsp;
++	int rc;
++
++	if (otx2_dev_is_vf(dev))
++		return -ENOTSUP;
++
++	if (otx2_dev_active_vfs(dev))
++		return -ENOTSUP;
++
++	req = otx2_mbox_alloc_msg_cgx_mac_addr_add(mbox);
++	otx2_mbox_memcpy(req->mac_addr, addr->addr_bytes, RTE_ETHER_ADDR_LEN);
++
++	rc = otx2_mbox_process_msg(mbox, (void *)&rsp);
++	if (rc) {
++		otx2_err("Failed to add mac address, rc=%d", rc);
++		goto done;
++	}
++
++	/* Enable promiscuous mode at NIX level */
++	otx2_nix_promisc_config(eth_dev, 1);
++
++done:
++	return rc;
++}
++
++void
++otx2_nix_mac_addr_del(struct rte_eth_dev *eth_dev, uint32_t index)
++{
++	struct otx2_eth_dev *dev = otx2_eth_pmd_priv(eth_dev);
++	struct otx2_mbox *mbox = dev->mbox;
++	struct cgx_mac_addr_del_req *req;
++	int rc;
++
++	if (otx2_dev_is_vf(dev))
++		return;
++
++	req = otx2_mbox_alloc_msg_cgx_mac_addr_del(mbox);
++	req->index = index;
++
++	rc = otx2_mbox_process(mbox);
++	if (rc)
++		otx2_err("Failed to delete mac address, rc=%d", rc);
++}
++
++int
++otx2_nix_mac_addr_set(struct rte_eth_dev *eth_dev, struct rte_ether_addr *addr)
++{
++	struct otx2_eth_dev *dev = otx2_eth_pmd_priv(eth_dev);
++	struct otx2_mbox *mbox = dev->mbox;
++	struct nix_set_mac_addr *req;
++	int rc;
++
++	req = otx2_mbox_alloc_msg_nix_set_mac_addr(mbox);
++	otx2_mbox_memcpy(req->mac_addr, addr->addr_bytes, RTE_ETHER_ADDR_LEN);
++
++	rc = otx2_mbox_process(mbox);
++	if (rc) {
++		otx2_err("Failed to set mac address, rc=%d", rc);
++		goto done;
++	}
++
++	otx2_mbox_memcpy(dev->mac_addr, addr->addr_bytes, RTE_ETHER_ADDR_LEN);
++
++	/* Install the same entry into CGX DMAC filter table too. */
++	otx2_cgx_mac_addr_set(eth_dev, addr);
++
++done:
++	return rc;
++}
++
+ int
+ otx2_nix_mac_addr_get(struct rte_eth_dev *eth_dev, uint8_t *addr)
+ {
+-- 
+2.14.4
+

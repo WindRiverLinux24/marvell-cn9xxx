@@ -1,0 +1,195 @@
+From 905460ec5ec1afeb2a72c3bbbdee9aef928c6d64 Mon Sep 17 00:00:00 2001
+From: Vamsi Attunuru <vattunuru@marvell.com>
+Date: Sun, 2 Jun 2019 17:27:54 +0530
+Subject: [PATCH 138/154] net/octeontx2: add MTU set operation
+
+Add MTU set operation and MTU update feature.
+
+Signed-off-by: Vamsi Attunuru <vattunuru@marvell.com>
+Signed-off-by: Sunil Kumar Kori <skori@marvell.com>
+Acked-by: Jerin Jacob <jerinj@marvell.com>
+---
+ doc/guides/nics/features/octeontx2.ini     |  1 +
+ doc/guides/nics/features/octeontx2_vec.ini |  1 +
+ doc/guides/nics/octeontx2.rst              |  1 +
+ drivers/net/octeontx2/otx2_ethdev.c        |  7 +++
+ drivers/net/octeontx2/otx2_ethdev.h        |  4 ++
+ drivers/net/octeontx2/otx2_ethdev_ops.c    | 86 ++++++++++++++++++++++++++++++
+ 6 files changed, 100 insertions(+)
+
+diff --git a/doc/guides/nics/features/octeontx2.ini b/doc/guides/nics/features/octeontx2.ini
+index 1856d992438a..be10dc0c8d83 100644
+--- a/doc/guides/nics/features/octeontx2.ini
++++ b/doc/guides/nics/features/octeontx2.ini
+@@ -15,6 +15,7 @@ Runtime Tx queue setup = Y
+ Fast mbuf free       = Y
+ Free Tx mbuf on demand = Y
+ Queue start/stop     = Y
++MTU update           = Y
+ Promiscuous mode     = Y
+ Allmulticast mode    = Y
+ Unicast MAC filter   = Y
+diff --git a/doc/guides/nics/features/octeontx2_vec.ini b/doc/guides/nics/features/octeontx2_vec.ini
+index 053fca288018..df8180f83698 100644
+--- a/doc/guides/nics/features/octeontx2_vec.ini
++++ b/doc/guides/nics/features/octeontx2_vec.ini
+@@ -15,6 +15,7 @@ Runtime Tx queue setup = Y
+ Fast mbuf free       = Y
+ Free Tx mbuf on demand = Y
+ Queue start/stop     = Y
++MTU update           = Y
+ Promiscuous mode     = Y
+ Allmulticast mode    = Y
+ Unicast MAC filter   = Y
+diff --git a/doc/guides/nics/octeontx2.rst b/doc/guides/nics/octeontx2.rst
+index 31cc1beec41b..a7ad31182cf1 100644
+--- a/doc/guides/nics/octeontx2.rst
++++ b/doc/guides/nics/octeontx2.rst
+@@ -30,6 +30,7 @@ Features of the OCTEON TX2 Ethdev PMD are:
+ - Port hardware statistics
+ - Link state information
+ - Link flow control
++- MTU update
+ - Scatter-Gather IO support
+ - Vector Poll mode driver
+ - Debug utilities - Context dump and error interrupt support
+diff --git a/drivers/net/octeontx2/otx2_ethdev.c b/drivers/net/octeontx2/otx2_ethdev.c
+index ddbb11167484..7d1fce55b286 100644
+--- a/drivers/net/octeontx2/otx2_ethdev.c
++++ b/drivers/net/octeontx2/otx2_ethdev.c
+@@ -1476,6 +1476,12 @@ otx2_nix_dev_start(struct rte_eth_dev *eth_dev)
+ 	struct otx2_eth_dev *dev = otx2_eth_pmd_priv(eth_dev);
+ 	int rc, i;
+ 
++	if (eth_dev->data->nb_rx_queues != 0) {
++		rc = otx2_nix_recalc_mtu(eth_dev);
++		if (rc)
++			return rc;
++	}
++
+ 	/* Start rx queues */
+ 	for (i = 0; i < eth_dev->data->nb_rx_queues; i++) {
+ 		rc = otx2_nix_rx_queue_start(eth_dev, i);
+@@ -1546,6 +1552,7 @@ static const struct eth_dev_ops otx2_eth_dev_ops = {
+ 	.stats_get                = otx2_nix_dev_stats_get,
+ 	.stats_reset              = otx2_nix_dev_stats_reset,
+ 	.get_reg                  = otx2_nix_dev_get_reg,
++	.mtu_set                  = otx2_nix_mtu_set,
+ 	.mac_addr_add             = otx2_nix_mac_addr_add,
+ 	.mac_addr_remove          = otx2_nix_mac_addr_del,
+ 	.mac_addr_set             = otx2_nix_mac_addr_set,
+diff --git a/drivers/net/octeontx2/otx2_ethdev.h b/drivers/net/octeontx2/otx2_ethdev.h
+index f39fdfa1fa97..3703acc69ca3 100644
+--- a/drivers/net/octeontx2/otx2_ethdev.h
++++ b/drivers/net/octeontx2/otx2_ethdev.h
+@@ -371,6 +371,10 @@ int otx2_nix_tx_queue_start(struct rte_eth_dev *eth_dev, uint16_t qidx);
+ int otx2_nix_tx_queue_stop(struct rte_eth_dev *eth_dev, uint16_t qidx);
+ uint64_t otx2_nix_rxq_mbuf_setup(struct otx2_eth_dev *dev, uint16_t port_id);
+ 
++/* MTU */
++int otx2_nix_mtu_set(struct rte_eth_dev *eth_dev, uint16_t mtu);
++int otx2_nix_recalc_mtu(struct rte_eth_dev *eth_dev);
++
+ /* Link */
+ void otx2_nix_toggle_flag_link_cfg(struct otx2_eth_dev *dev, bool set);
+ int otx2_nix_link_update(struct rte_eth_dev *eth_dev, int wait_to_complete);
+diff --git a/drivers/net/octeontx2/otx2_ethdev_ops.c b/drivers/net/octeontx2/otx2_ethdev_ops.c
+index 6a3048336c98..5a16a3c04d93 100644
+--- a/drivers/net/octeontx2/otx2_ethdev_ops.c
++++ b/drivers/net/octeontx2/otx2_ethdev_ops.c
+@@ -6,6 +6,92 @@
+ 
+ #include "otx2_ethdev.h"
+ 
++int
++otx2_nix_mtu_set(struct rte_eth_dev *eth_dev, uint16_t mtu)
++{
++	uint32_t buffsz, frame_size = mtu + NIX_L2_OVERHEAD;
++	struct otx2_eth_dev *dev = otx2_eth_pmd_priv(eth_dev);
++	struct rte_eth_dev_data *data = eth_dev->data;
++	struct otx2_mbox *mbox = dev->mbox;
++	struct nix_frs_cfg *req;
++	int rc;
++
++	/* Check if MTU is within the allowed range */
++	if (frame_size < NIX_MIN_FRS || frame_size > NIX_MAX_FRS)
++		return -EINVAL;
++
++	buffsz = data->min_rx_buf_size - RTE_PKTMBUF_HEADROOM;
++
++	/* Refuse MTU that requires the support of scattered packets
++	 * when this feature has not been enabled before.
++	 */
++	if (data->dev_started && frame_size > buffsz &&
++	    !(dev->rx_offloads & DEV_RX_OFFLOAD_SCATTER))
++		return -EINVAL;
++
++	/* Check <seg size> * <max_seg>  >= max_frame */
++	if ((dev->rx_offloads & DEV_RX_OFFLOAD_SCATTER)	&&
++	    (frame_size > buffsz * NIX_RX_NB_SEG_MAX))
++		return -EINVAL;
++
++	req = otx2_mbox_alloc_msg_nix_set_hw_frs(mbox);
++	req->update_smq = true;
++	/* FRS HW config should exclude FCS but include NPC VTAG insert size */
++	req->maxlen = frame_size - RTE_ETHER_CRC_LEN + NIX_MAX_VTAG_ACT_SIZE;
++
++	rc = otx2_mbox_process(mbox);
++	if (rc)
++		return rc;
++
++	/* Now just update Rx MAXLEN */
++	req = otx2_mbox_alloc_msg_nix_set_hw_frs(mbox);
++	req->maxlen = frame_size - RTE_ETHER_CRC_LEN;
++
++	rc = otx2_mbox_process(mbox);
++	if (rc)
++		return rc;
++
++	if (frame_size > RTE_ETHER_MAX_LEN)
++		dev->rx_offloads |= DEV_RX_OFFLOAD_JUMBO_FRAME;
++	else
++		dev->rx_offloads &= ~DEV_RX_OFFLOAD_JUMBO_FRAME;
++
++	/* Update max_rx_pkt_len */
++	data->dev_conf.rxmode.max_rx_pkt_len = frame_size;
++
++	return rc;
++}
++
++int
++otx2_nix_recalc_mtu(struct rte_eth_dev *eth_dev)
++{
++	struct otx2_eth_dev *dev = otx2_eth_pmd_priv(eth_dev);
++	struct rte_eth_dev_data *data = eth_dev->data;
++	struct rte_pktmbuf_pool_private *mbp_priv;
++	struct otx2_eth_rxq *rxq;
++	uint32_t buffsz;
++	uint16_t mtu;
++	int rc;
++
++	/* Get rx buffer size */
++	rxq = data->rx_queues[0];
++	mbp_priv = rte_mempool_get_priv(rxq->pool);
++	buffsz = mbp_priv->mbuf_data_room_size - RTE_PKTMBUF_HEADROOM;
++
++	/* Setup scatter mode if needed by jumbo */
++	if (data->dev_conf.rxmode.max_rx_pkt_len > buffsz)
++		dev->rx_offloads |= DEV_RX_OFFLOAD_SCATTER;
++
++	/* Setup MTU based on max_rx_pkt_len */
++	mtu = data->dev_conf.rxmode.max_rx_pkt_len - NIX_L2_OVERHEAD;
++
++	rc = otx2_nix_mtu_set(eth_dev, mtu);
++	if (rc)
++		otx2_err("Failed to set default MTU size %d", rc);
++
++	return rc;
++}
++
+ static void
+ nix_cgx_promisc_config(struct rte_eth_dev *eth_dev, int en)
+ {
+-- 
+2.14.4
+

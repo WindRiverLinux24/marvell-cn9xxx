@@ -1,0 +1,534 @@
+From f0a364c57fe69715f57647b850cd1129a8fa4191 Mon Sep 17 00:00:00 2001
+From: Jerin Jacob <jerinj@marvell.com>
+Date: Tue, 28 May 2019 18:08:35 +0530
+Subject: [PATCH 085/154] net/octeontx2: add device init and uninit
+
+Add basic init and uninit function which includes
+attaching LF device to probed PCIe device.
+
+Signed-off-by: Jerin Jacob <jerinj@marvell.com>
+Signed-off-by: Nithin Dabilpuram <ndabilpuram@marvell.com>
+Signed-off-by: Sunil Kumar Kori <skori@marvell.com>
+Signed-off-by: Vamsi Attunuru <vattunuru@marvell.com>
+---
+ drivers/net/octeontx2/Makefile      |   1 +
+ drivers/net/octeontx2/meson.build   |   1 +
+ drivers/net/octeontx2/otx2_ethdev.c | 277 +++++++++++++++++++++++++++++++++++-
+ drivers/net/octeontx2/otx2_ethdev.h |  72 ++++++++++
+ drivers/net/octeontx2/otx2_mac.c    |  72 ++++++++++
+ 5 files changed, 418 insertions(+), 5 deletions(-)
+ create mode 100644 drivers/net/octeontx2/otx2_mac.c
+
+diff --git a/drivers/net/octeontx2/Makefile b/drivers/net/octeontx2/Makefile
+index bf44175a0377..e3c06f12d15d 100644
+--- a/drivers/net/octeontx2/Makefile
++++ b/drivers/net/octeontx2/Makefile
+@@ -31,6 +31,7 @@ LIBABIVER := 1
+ # all source are stored in SRCS-y
+ #
+ SRCS-$(CONFIG_RTE_LIBRTE_OCTEONTX2_PMD) += \
++	otx2_mac.c	\
+ 	otx2_ethdev.c
+ 
+ LDLIBS += -lrte_common_octeontx2 -lrte_mempool_octeontx2 -lrte_eal
+diff --git a/drivers/net/octeontx2/meson.build b/drivers/net/octeontx2/meson.build
+index db375f33be3b..b153f166de05 100644
+--- a/drivers/net/octeontx2/meson.build
++++ b/drivers/net/octeontx2/meson.build
+@@ -3,6 +3,7 @@
+ #
+ 
+ sources = files(
++		'otx2_mac.c',
+ 		'otx2_ethdev.c',
+ 		)
+ 
+diff --git a/drivers/net/octeontx2/otx2_ethdev.c b/drivers/net/octeontx2/otx2_ethdev.c
+index 05fa8988e2a0..08f03b4c3740 100644
+--- a/drivers/net/octeontx2/otx2_ethdev.c
++++ b/drivers/net/octeontx2/otx2_ethdev.c
+@@ -8,27 +8,277 @@
+ 
+ #include "otx2_ethdev.h"
+ 
++static inline void
++otx2_eth_set_rx_function(struct rte_eth_dev *eth_dev)
++{
++	RTE_SET_USED(eth_dev);
++}
++
++static inline void
++otx2_eth_set_tx_function(struct rte_eth_dev *eth_dev)
++{
++	RTE_SET_USED(eth_dev);
++}
++
++static inline uint64_t
++nix_get_rx_offload_capa(struct otx2_eth_dev *dev)
++{
++	uint64_t capa = NIX_RX_OFFLOAD_CAPA;
++
++	if (otx2_dev_is_vf(dev))
++		capa &= ~DEV_RX_OFFLOAD_TIMESTAMP;
++
++	return capa;
++}
++
++static inline uint64_t
++nix_get_tx_offload_capa(struct otx2_eth_dev *dev)
++{
++	RTE_SET_USED(dev);
++
++	return NIX_TX_OFFLOAD_CAPA;
++}
++
++static int
++nix_lf_free(struct otx2_eth_dev *dev)
++{
++	struct otx2_mbox *mbox = dev->mbox;
++	struct nix_lf_free_req *req;
++	struct ndc_sync_op *ndc_req;
++	int rc;
++
++	/* Sync NDC-NIX for LF */
++	ndc_req = otx2_mbox_alloc_msg_ndc_sync_op(mbox);
++	ndc_req->nix_lf_tx_sync = 1;
++	ndc_req->nix_lf_rx_sync = 1;
++	rc = otx2_mbox_process(mbox);
++	if (rc)
++		otx2_err("Error on NDC-NIX-[TX, RX] LF sync, rc %d", rc);
++
++	req = otx2_mbox_alloc_msg_nix_lf_free(mbox);
++	/* Let AF driver free all this nix lf's
++	 * NPC entries allocated using NPC MBOX.
++	 */
++	req->flags = 0;
++
++	return otx2_mbox_process(mbox);
++}
++
++static inline int
++nix_lf_attach(struct otx2_eth_dev *dev)
++{
++	struct otx2_mbox *mbox = dev->mbox;
++	struct rsrc_attach_req *req;
++
++	/* Attach NIX(lf) */
++	req = otx2_mbox_alloc_msg_attach_resources(mbox);
++	req->modify = true;
++	req->nixlf = true;
++
++	return otx2_mbox_process(mbox);
++}
++
++static inline int
++nix_lf_get_msix_offset(struct otx2_eth_dev *dev)
++{
++	struct otx2_mbox *mbox = dev->mbox;
++	struct msix_offset_rsp *msix_rsp;
++	int rc;
++
++	/* Get NPA and NIX MSIX vector offsets */
++	otx2_mbox_alloc_msg_msix_offset(mbox);
++
++	rc = otx2_mbox_process_msg(mbox, (void *)&msix_rsp);
++
++	dev->nix_msixoff = msix_rsp->nix_msixoff;
++
++	return rc;
++}
++
++static inline int
++otx2_eth_dev_lf_detach(struct otx2_mbox *mbox)
++{
++	struct rsrc_detach_req *req;
++
++	req = otx2_mbox_alloc_msg_detach_resources(mbox);
++
++	/* Detach all except npa lf */
++	req->partial = true;
++	req->nixlf = true;
++	req->sso = true;
++	req->ssow = true;
++	req->timlfs = true;
++	req->cptlfs = true;
++
++	return otx2_mbox_process(mbox);
++}
++
+ static int
+ otx2_eth_dev_init(struct rte_eth_dev *eth_dev)
+ {
+-	RTE_SET_USED(eth_dev);
++	struct otx2_eth_dev *dev = otx2_eth_pmd_priv(eth_dev);
++	struct rte_pci_device *pci_dev;
++	int rc, max_entries;
+ 
+-	return -ENODEV;
++	/* For secondary processes, the primary has done all the work */
++	if (rte_eal_process_type() != RTE_PROC_PRIMARY) {
++		/* Setup callbacks for secondary process */
++		otx2_eth_set_tx_function(eth_dev);
++		otx2_eth_set_rx_function(eth_dev);
++		return 0;
++	}
++
++	pci_dev = RTE_ETH_DEV_TO_PCI(eth_dev);
++
++	rte_eth_copy_pci_info(eth_dev, pci_dev);
++	eth_dev->data->dev_flags |= RTE_ETH_DEV_CLOSE_REMOVE;
++
++	/* Zero out everything after OTX2_DEV to allow proper dev_reset() */
++	memset(&dev->otx2_eth_dev_data_start, 0, sizeof(*dev) -
++		offsetof(struct otx2_eth_dev, otx2_eth_dev_data_start));
++
++	if (!dev->mbox_active) {
++		/* Initialize the base otx2_dev object
++		 * only if already present
++		 */
++		rc = otx2_dev_init(pci_dev, dev);
++		if (rc) {
++			otx2_err("Failed to initialize otx2_dev rc=%d", rc);
++			goto error;
++		}
++	}
++
++	/* Grab the NPA LF if required */
++	rc = otx2_npa_lf_init(pci_dev, dev);
++	if (rc)
++		goto otx2_dev_uninit;
++
++	dev->configured = 0;
++	dev->drv_inited = true;
++	dev->base = dev->bar2 + (RVU_BLOCK_ADDR_NIX0 << 20);
++	dev->lmt_addr = dev->bar2 + (RVU_BLOCK_ADDR_LMT << 20);
++
++	/* Attach NIX LF */
++	rc = nix_lf_attach(dev);
++	if (rc)
++		goto otx2_npa_uninit;
++
++	/* Get NIX MSIX offset */
++	rc = nix_lf_get_msix_offset(dev);
++	if (rc)
++		goto otx2_npa_uninit;
++
++	/* Get maximum number of supported MAC entries */
++	max_entries = otx2_cgx_mac_max_entries_get(dev);
++	if (max_entries < 0) {
++		otx2_err("Failed to get max entries for mac addr");
++		rc = -ENOTSUP;
++		goto mbox_detach;
++	}
++
++	/* For VFs, returned max_entries will be 0. But to keep default MAC
++	 * address, one entry must be allocated. So setting up to 1.
++	 */
++	if (max_entries == 0)
++		max_entries = 1;
++
++	eth_dev->data->mac_addrs = rte_zmalloc("mac_addr", max_entries *
++					       RTE_ETHER_ADDR_LEN, 0);
++	if (eth_dev->data->mac_addrs == NULL) {
++		otx2_err("Failed to allocate memory for mac addr");
++		rc = -ENOMEM;
++		goto mbox_detach;
++	}
++
++	dev->max_mac_entries = max_entries;
++
++	rc = otx2_nix_mac_addr_get(eth_dev, dev->mac_addr);
++	if (rc)
++		goto free_mac_addrs;
++
++	/* Update the mac address */
++	memcpy(eth_dev->data->mac_addrs, dev->mac_addr, RTE_ETHER_ADDR_LEN);
++
++	/* Also sync same MAC address to CGX table */
++	otx2_cgx_mac_addr_set(eth_dev, &eth_dev->data->mac_addrs[0]);
++
++	dev->tx_offload_capa = nix_get_tx_offload_capa(dev);
++	dev->rx_offload_capa = nix_get_rx_offload_capa(dev);
++
++	if (otx2_dev_is_A0(dev)) {
++		dev->hwcap |= OTX2_FIXUP_F_MIN_4K_Q;
++		dev->hwcap |= OTX2_FIXUP_F_LIMIT_CQ_FULL;
++	}
++
++	otx2_nix_dbg("Port=%d pf=%d vf=%d ver=%s msix_off=%d hwcap=0x%" PRIx64
++		     " rxoffload_capa=0x%" PRIx64 " txoffload_capa=0x%" PRIx64,
++		     eth_dev->data->port_id, dev->pf, dev->vf,
++		     OTX2_ETH_DEV_PMD_VERSION, dev->nix_msixoff, dev->hwcap,
++		     dev->rx_offload_capa, dev->tx_offload_capa);
++	return 0;
++
++free_mac_addrs:
++	rte_free(eth_dev->data->mac_addrs);
++mbox_detach:
++	otx2_eth_dev_lf_detach(dev->mbox);
++otx2_npa_uninit:
++	otx2_npa_lf_fini();
++otx2_dev_uninit:
++	otx2_dev_fini(pci_dev, dev);
++error:
++	otx2_err("Failed to init nix eth_dev rc=%d", rc);
++	return rc;
+ }
+ 
+ static int
+ otx2_eth_dev_uninit(struct rte_eth_dev *eth_dev, bool mbox_close)
+ {
+-	RTE_SET_USED(eth_dev);
+-	RTE_SET_USED(mbox_close);
++	struct otx2_eth_dev *dev = otx2_eth_pmd_priv(eth_dev);
++	struct rte_pci_device *pci_dev;
++	int rc;
++
++	/* Nothing to be done for secondary processes */
++	if (rte_eal_process_type() != RTE_PROC_PRIMARY)
++		return 0;
++
++	rc = nix_lf_free(dev);
++	if (rc)
++		otx2_err("Failed to free nix lf, rc=%d", rc);
++
++	rc = otx2_npa_lf_fini();
++	if (rc)
++		otx2_err("Failed to cleanup npa lf, rc=%d", rc);
++
++	rte_free(eth_dev->data->mac_addrs);
++	eth_dev->data->mac_addrs = NULL;
++	dev->drv_inited = false;
++
++	pci_dev = RTE_ETH_DEV_TO_PCI(eth_dev);
+ 
+-	return -ENODEV;
++	rc = otx2_eth_dev_lf_detach(dev->mbox);
++	if (rc)
++		otx2_err("Failed to detach resources, rc=%d", rc);
++
++	/* Check if mbox close is needed */
++	if (!mbox_close)
++		return 0;
++
++	if (otx2_npa_lf_active(dev) || otx2_dev_active_vfs(dev)) {
++		/* Will be freed later by PMD */
++		eth_dev->data->dev_private = NULL;
++		return 0;
++	}
++
++	otx2_dev_fini(pci_dev, dev);
++	return 0;
+ }
+ 
+ static int
+ nix_remove(struct rte_pci_device *pci_dev)
+ {
+ 	struct rte_eth_dev *eth_dev;
++	struct otx2_idev_cfg *idev;
++	struct otx2_dev *otx2_dev;
+ 	int rc;
+ 
+ 	eth_dev = rte_eth_dev_allocated(pci_dev->device.name);
+@@ -45,7 +295,24 @@ nix_remove(struct rte_pci_device *pci_dev)
+ 	if (rte_eal_process_type() != RTE_PROC_PRIMARY)
+ 		return 0;
+ 
++	/* Check for common resources */
++	idev = otx2_intra_dev_get_cfg();
++	if (!idev || !idev->npa_lf || idev->npa_lf->pci_dev != pci_dev)
++		return 0;
++
++	otx2_dev = container_of(idev->npa_lf, struct otx2_dev, npalf);
++
++	if (otx2_npa_lf_active(otx2_dev) || otx2_dev_active_vfs(otx2_dev))
++		goto exit;
++
++	/* Safe to cleanup mbox as no more users */
++	otx2_dev_fini(pci_dev, otx2_dev);
++	rte_free(otx2_dev);
+ 	return 0;
++
++exit:
++	otx2_info("%s: common resource in use by other devices", pci_dev->name);
++	return -EAGAIN;
+ }
+ 
+ static int
+diff --git a/drivers/net/octeontx2/otx2_ethdev.h b/drivers/net/octeontx2/otx2_ethdev.h
+index fd01a3254ed3..d9f72686a3f4 100644
+--- a/drivers/net/octeontx2/otx2_ethdev.h
++++ b/drivers/net/octeontx2/otx2_ethdev.h
+@@ -8,14 +8,76 @@
+ #include <stdint.h>
+ 
+ #include <rte_common.h>
++#include <rte_ethdev.h>
+ 
+ #include "otx2_common.h"
+ #include "otx2_dev.h"
+ #include "otx2_irq.h"
+ #include "otx2_mempool.h"
+ 
++#define OTX2_ETH_DEV_PMD_VERSION	"1.0"
++
++/* Ethdev HWCAP and Fixup flags. Use from MSB bits to avoid conflict with dev */
++
++/* Minimum CQ size should be 4K */
++#define OTX2_FIXUP_F_MIN_4K_Q		BIT_ULL(63)
++#define otx2_ethdev_fixup_is_min_4k_q(dev)	\
++				((dev)->hwcap & OTX2_FIXUP_F_MIN_4K_Q)
++/* Limit CQ being full */
++#define OTX2_FIXUP_F_LIMIT_CQ_FULL	BIT_ULL(62)
++#define otx2_ethdev_fixup_is_limit_cq_full(dev) \
++				((dev)->hwcap & OTX2_FIXUP_F_LIMIT_CQ_FULL)
++
++/* Used for struct otx2_eth_dev::flags */
++#define OTX2_LINK_CFG_IN_PROGRESS_F	BIT_ULL(0)
++
++#define NIX_TX_OFFLOAD_CAPA ( \
++	DEV_TX_OFFLOAD_MBUF_FAST_FREE	| \
++	DEV_TX_OFFLOAD_MT_LOCKFREE	| \
++	DEV_TX_OFFLOAD_VLAN_INSERT	| \
++	DEV_TX_OFFLOAD_QINQ_INSERT	| \
++	DEV_TX_OFFLOAD_OUTER_IPV4_CKSUM | \
++	DEV_TX_OFFLOAD_OUTER_UDP_CKSUM  | \
++	DEV_TX_OFFLOAD_TCP_CKSUM	| \
++	DEV_TX_OFFLOAD_UDP_CKSUM	| \
++	DEV_TX_OFFLOAD_SCTP_CKSUM	| \
++	DEV_TX_OFFLOAD_MULTI_SEGS	| \
++	DEV_TX_OFFLOAD_IPV4_CKSUM)
++
++#define NIX_RX_OFFLOAD_CAPA ( \
++	DEV_RX_OFFLOAD_CHECKSUM		| \
++	DEV_RX_OFFLOAD_SCTP_CKSUM	| \
++	DEV_RX_OFFLOAD_OUTER_IPV4_CKSUM | \
++	DEV_RX_OFFLOAD_SCATTER		| \
++	DEV_RX_OFFLOAD_JUMBO_FRAME	| \
++	DEV_RX_OFFLOAD_OUTER_UDP_CKSUM | \
++	DEV_RX_OFFLOAD_VLAN_STRIP | \
++	DEV_RX_OFFLOAD_VLAN_FILTER | \
++	DEV_RX_OFFLOAD_QINQ_STRIP | \
++	DEV_RX_OFFLOAD_TIMESTAMP)
++
+ struct otx2_eth_dev {
+ 	OTX2_DEV; /* Base class */
++	MARKER otx2_eth_dev_data_start;
++	uint16_t sqb_size;
++	uint16_t rx_chan_base;
++	uint16_t tx_chan_base;
++	uint8_t rx_chan_cnt;
++	uint8_t tx_chan_cnt;
++	uint8_t lso_tsov4_idx;
++	uint8_t lso_tsov6_idx;
++	uint8_t mac_addr[RTE_ETHER_ADDR_LEN];
++	uint8_t max_mac_entries;
++	uint8_t configured;
++	uint16_t nix_msixoff;
++	uintptr_t base;
++	uintptr_t lmt_addr;
++	uint16_t rx_offload_flags; /* Selected Rx offload flags(NIX_RX_*_F) */
++	uint64_t rx_offloads;
++	uint16_t tx_offload_flags; /* Selected Tx offload flags(NIX_TX_*_F) */
++	uint64_t tx_offloads;
++	uint64_t rx_offload_capa;
++	uint64_t tx_offload_capa;
+ } __rte_cache_aligned;
+ 
+ static inline struct otx2_eth_dev *
+@@ -24,4 +86,14 @@ otx2_eth_pmd_priv(struct rte_eth_dev *eth_dev)
+ 	return eth_dev->data->dev_private;
+ }
+ 
++/* CGX */
++int otx2_cgx_rxtx_start(struct otx2_eth_dev *dev);
++int otx2_cgx_rxtx_stop(struct otx2_eth_dev *dev);
++int otx2_cgx_mac_addr_set(struct rte_eth_dev *eth_dev,
++			  struct rte_ether_addr *addr);
++
++/* Mac address handling */
++int otx2_nix_mac_addr_get(struct rte_eth_dev *eth_dev, uint8_t *addr);
++int otx2_cgx_mac_max_entries_get(struct otx2_eth_dev *dev);
++
+ #endif /* __OTX2_ETHDEV_H__ */
+diff --git a/drivers/net/octeontx2/otx2_mac.c b/drivers/net/octeontx2/otx2_mac.c
+new file mode 100644
+index 000000000000..89b0ca6b0196
+--- /dev/null
++++ b/drivers/net/octeontx2/otx2_mac.c
+@@ -0,0 +1,72 @@
++/* SPDX-License-Identifier: BSD-3-Clause
++ * Copyright(C) 2019 Marvell International Ltd.
++ */
++
++#include <rte_common.h>
++
++#include "otx2_dev.h"
++#include "otx2_ethdev.h"
++
++int
++otx2_cgx_mac_addr_set(struct rte_eth_dev *eth_dev, struct rte_ether_addr *addr)
++{
++	struct otx2_eth_dev *dev = otx2_eth_pmd_priv(eth_dev);
++	struct cgx_mac_addr_set_or_get *req;
++	struct otx2_mbox *mbox = dev->mbox;
++	int rc;
++
++	if (otx2_dev_is_vf(dev))
++		return -ENOTSUP;
++
++	if (otx2_dev_active_vfs(dev))
++		return -ENOTSUP;
++
++	req = otx2_mbox_alloc_msg_cgx_mac_addr_set(mbox);
++	otx2_mbox_memcpy(req->mac_addr, addr->addr_bytes, RTE_ETHER_ADDR_LEN);
++
++	rc = otx2_mbox_process(mbox);
++	if (rc)
++		otx2_err("Failed to set mac address in CGX, rc=%d", rc);
++
++	return 0;
++}
++
++int
++otx2_cgx_mac_max_entries_get(struct otx2_eth_dev *dev)
++{
++	struct cgx_max_dmac_entries_get_rsp *rsp;
++	struct otx2_mbox *mbox = dev->mbox;
++	int rc;
++
++	if (otx2_dev_is_vf(dev))
++		return 0;
++
++	otx2_mbox_alloc_msg_cgx_mac_max_entries_get(mbox);
++	rc = otx2_mbox_process_msg(mbox, (void *)&rsp);
++	if (rc)
++		return rc;
++
++	return rsp->max_dmac_filters;
++}
++
++int
++otx2_nix_mac_addr_get(struct rte_eth_dev *eth_dev, uint8_t *addr)
++{
++	struct otx2_eth_dev *dev = otx2_eth_pmd_priv(eth_dev);
++	struct otx2_mbox *mbox = dev->mbox;
++	struct nix_get_mac_addr_rsp *rsp;
++	int rc;
++
++	otx2_mbox_alloc_msg_nix_get_mac_addr(mbox);
++	otx2_mbox_msg_send(mbox, 0);
++	rc = otx2_mbox_get_rsp(mbox, 0, (void *)&rsp);
++	if (rc) {
++		otx2_err("Failed to get mac address, rc=%d", rc);
++		goto done;
++	}
++
++	otx2_mbox_memcpy(addr, rsp->mac_addr, RTE_ETHER_ADDR_LEN);
++
++done:
++	return rc;
++}
+-- 
+2.14.4
+

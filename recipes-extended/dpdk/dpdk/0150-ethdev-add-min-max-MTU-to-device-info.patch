@@ -1,0 +1,176 @@
+From d1c1717a0c31f76b5eb680d9d47bc2e13a454d33 Mon Sep 17 00:00:00 2001
+From: Stephen Hemminger <stephen@networkplumber.org>
+Date: Fri, 29 Mar 2019 17:52:13 +0000
+Subject: [PATCH 150/154] ethdev: add min/max MTU to device info
+
+This addresses the usability issue raised by OVS at DPDK Userspace
+summit. It adds general min/max MTU into device info. For compatibility,
+and to save space, it fits in a hole in existing structure.
+
+The initial version sets max MTU to normal Ethernet, it is up to
+PMD to set larger value if it supports Jumbo frames.
+
+Also remove the deprecation notice introduced in 18.11 regarding this
+change and bump ethdev ABI version.
+
+Signed-off-by: Stephen Hemminger <stephen@networkplumber.org>
+Signed-off-by: Ian Stokes <ian.stokes@intel.com>
+Acked-by: Andrew Rybchenko <arybchenko@solarflare.com>
+Reviewed-by: Ferruh Yigit <ferruh.yigit@intel.com>
+---
+ doc/guides/rel_notes/deprecation.rst | 12 ------------
+ lib/librte_ethdev/Makefile           |  2 +-
+ lib/librte_ethdev/meson.build        |  2 +-
+ lib/librte_ethdev/rte_ethdev.c       | 15 +++++++++++++++
+ lib/librte_ethdev/rte_ethdev.h       | 33 ++++++++++++++++++++++++++++++++-
+ 5 files changed, 49 insertions(+), 15 deletions(-)
+
+diff --git a/doc/guides/rel_notes/deprecation.rst b/doc/guides/rel_notes/deprecation.rst
+index b48486d36d2a..299d6ffb9737 100644
+--- a/doc/guides/rel_notes/deprecation.rst
++++ b/doc/guides/rel_notes/deprecation.rst
+@@ -74,18 +74,6 @@ Deprecation Notices
+   Target release for removal of the legacy API will be defined once most
+   PMDs have switched to rte_flow.
+ 
+-* ethdev: Maximum and minimum MTU values vary between hardware devices. In
+-  hardware agnostic DPDK applications access to such information would allow
+-  a more accurate way of validating and setting supported MTU values on a per
+-  device basis rather than using a defined default for all devices. To
+-  resolve this, the following members will be added to ``rte_eth_dev_info``.
+-  Note: these can be added to fit a hole in the existing structure for amd64
+-  but not for 32-bit, as such ABI change will occur as size of the structure
+-  will increase.
+-
+-  - Member ``uint16_t min_mtu`` the minimum MTU allowed.
+-  - Member ``uint16_t max_mtu`` the maximum MTU allowed.
+-
+ * security: New field ``uint64_t opaque_data`` is planned to be added into
+   ``rte_security_session`` structure. That would allow upper layer to easily
+   associate/de-associate some user defined data with the security session.
+diff --git a/lib/librte_ethdev/Makefile b/lib/librte_ethdev/Makefile
+index 3e27ae466fc7..6cbb3a1efab1 100644
+--- a/lib/librte_ethdev/Makefile
++++ b/lib/librte_ethdev/Makefile
+@@ -16,7 +16,7 @@ LDLIBS += -lrte_mbuf -lrte_kvargs -lrte_cmdline
+ 
+ EXPORT_MAP := rte_ethdev_version.map
+ 
+-LIBABIVER := 11
++LIBABIVER := 12
+ 
+ SRCS-y += ethdev_private.c
+ SRCS-y += rte_ethdev.c
+diff --git a/lib/librte_ethdev/meson.build b/lib/librte_ethdev/meson.build
+index a4d8502682a7..a9f982eceb84 100644
+--- a/lib/librte_ethdev/meson.build
++++ b/lib/librte_ethdev/meson.build
+@@ -2,7 +2,7 @@
+ # Copyright(c) 2017 Intel Corporation
+ 
+ name = 'ethdev'
+-version = 11
++version = 12
+ allow_experimental_apis = true
+ sources = files('ethdev_private.c',
+ 	'ethdev_profile.c',
+diff --git a/lib/librte_ethdev/rte_ethdev.c b/lib/librte_ethdev/rte_ethdev.c
+index 9d5107dce3e7..13389cdfec26 100644
+--- a/lib/librte_ethdev/rte_ethdev.c
++++ b/lib/librte_ethdev/rte_ethdev.c
+@@ -2527,6 +2527,8 @@ rte_eth_dev_info_get(uint16_t port_id, struct rte_eth_dev_info *dev_info)
+ 	dev_info->rx_desc_lim = lim;
+ 	dev_info->tx_desc_lim = lim;
+ 	dev_info->device = dev->device;
++	dev_info->min_mtu = ETHER_MIN_MTU;
++	dev_info->max_mtu = UINT16_MAX;
+ 
+ 	RTE_FUNC_PTR_OR_RET(*dev->dev_ops->dev_infos_get);
+ 	(*dev->dev_ops->dev_infos_get)(dev, dev_info);
+@@ -2590,12 +2592,25 @@ int
+ rte_eth_dev_set_mtu(uint16_t port_id, uint16_t mtu)
+ {
+ 	int ret;
++	struct rte_eth_dev_info dev_info;
+ 	struct rte_eth_dev *dev;
+ 
+ 	RTE_ETH_VALID_PORTID_OR_ERR_RET(port_id, -ENODEV);
+ 	dev = &rte_eth_devices[port_id];
+ 	RTE_FUNC_PTR_OR_ERR_RET(*dev->dev_ops->mtu_set, -ENOTSUP);
+ 
++	/*
++	 * Check if the device supports dev_infos_get, if it does not
++	 * skip min_mtu/max_mtu validation here as this requires values
++	 * that are populated within the call to rte_eth_dev_info_get()
++	 * which relies on dev->dev_ops->dev_infos_get.
++	 */
++	if (*dev->dev_ops->dev_infos_get != NULL) {
++		rte_eth_dev_info_get(port_id, &dev_info);
++		if (mtu < dev_info.min_mtu || mtu > dev_info.max_mtu)
++			return -EINVAL;
++	}
++
+ 	ret = (*dev->dev_ops->mtu_set)(dev, mtu);
+ 	if (!ret)
+ 		dev->data->mtu = mtu;
+diff --git a/lib/librte_ethdev/rte_ethdev.h b/lib/librte_ethdev/rte_ethdev.h
+index a3c864a134ea..bea1bd2d4149 100644
+--- a/lib/librte_ethdev/rte_ethdev.h
++++ b/lib/librte_ethdev/rte_ethdev.h
+@@ -1086,6 +1086,8 @@ struct rte_eth_dev_info {
+ 	const char *driver_name; /**< Device Driver name. */
+ 	unsigned int if_index; /**< Index to bound host interface, or 0 if none.
+ 		Use if_indextoname() to translate into an interface name. */
++	uint16_t min_mtu;	/**< Minimum MTU allowed */
++	uint16_t max_mtu;	/**< Maximum MTU allowed */
+ 	const uint32_t *dev_flags; /**< Device flags */
+ 	uint32_t min_rx_bufsize; /**< Minimum size of RX buffer. */
+ 	uint32_t max_rx_pktlen; /**< Maximum configurable length of RX pkt. */
+@@ -2202,6 +2204,33 @@ void rte_eth_macaddr_get(uint16_t port_id, struct ether_addr *mac_addr);
+ /**
+  * Retrieve the contextual information of an Ethernet device.
+  *
++ * As part of this function, a number of of fields in dev_info will be
++ * initialized as follows:
++ *
++ * rx_desc_lim = lim
++ * tx_desc_lim = lim
++ *
++ * Where lim is defined within the rte_eth_dev_info_get as
++ *
++ *  const struct rte_eth_desc_lim lim = {
++ *      .nb_max = UINT16_MAX,
++ *      .nb_min = 0,
++ *      .nb_align = 1,
++ *  };
++ *
++ * device = dev->device
++ * min_mtu = ETHER_MIN_MTU
++ * max_mtu = UINT16_MAX
++ *
++ * The following fields will be populated if support for dev_infos_get()
++ * exists for the device and the rte_eth_dev 'dev' has been populated
++ * successfully with a call to it:
++ *
++ * driver_name = dev->device->driver->name
++ * nb_rx_queues = dev->data->nb_rx_queues
++ * nb_tx_queues = dev->data->nb_tx_queues
++ * dev_flags = &dev->data->dev_flags
++ *
+  * @param port_id
+  *   The port identifier of the Ethernet device.
+  * @param dev_info
+@@ -2298,7 +2327,9 @@ int rte_eth_dev_get_mtu(uint16_t port_id, uint16_t *mtu);
+  *   - (-ENOTSUP) if operation is not supported.
+  *   - (-ENODEV) if *port_id* invalid.
+  *   - (-EIO) if device is removed.
+- *   - (-EINVAL) if *mtu* invalid.
++ *   - (-EINVAL) if *mtu* invalid, validation of mtu can occur within
++ *     rte_eth_dev_set_mtu if dev_infos_get is supported by the device or
++ *     when the mtu is set using dev->dev_ops->mtu_set.
+  *   - (-EBUSY) if operation is not allowed when the port is running
+  */
+ int rte_eth_dev_set_mtu(uint16_t port_id, uint16_t mtu);
+-- 
+2.14.4
+

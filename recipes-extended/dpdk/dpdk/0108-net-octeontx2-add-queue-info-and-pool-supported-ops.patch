@@ -1,0 +1,117 @@
+From c6a00a6f800172cdd02a15a5591b949232dd0435 Mon Sep 17 00:00:00 2001
+From: Nithin Dabilpuram <ndabilpuram@marvell.com>
+Date: Fri, 31 May 2019 11:46:55 +0530
+Subject: [PATCH 108/154] net/octeontx2: add queue info and pool supported ops
+
+Add Rx and Tx queue info get and pool ops supported operations.
+
+Signed-off-by: Nithin Dabilpuram <ndabilpuram@marvell.com>
+Signed-off-by: Kiran Kumar K <kirankumark@marvell.com>
+---
+ drivers/net/octeontx2/otx2_ethdev.c     |  3 ++
+ drivers/net/octeontx2/otx2_ethdev.h     |  5 ++++
+ drivers/net/octeontx2/otx2_ethdev_ops.c | 51 +++++++++++++++++++++++++++++++++
+ 3 files changed, 59 insertions(+)
+
+diff --git a/drivers/net/octeontx2/otx2_ethdev.c b/drivers/net/octeontx2/otx2_ethdev.c
+index 62514c6f693e..7ef2cb87cfbd 100644
+--- a/drivers/net/octeontx2/otx2_ethdev.c
++++ b/drivers/net/octeontx2/otx2_ethdev.c
+@@ -1312,6 +1312,9 @@ static const struct eth_dev_ops otx2_eth_dev_ops = {
+ 	.xstats_reset             = otx2_nix_xstats_reset,
+ 	.xstats_get_by_id         = otx2_nix_xstats_get_by_id,
+ 	.xstats_get_names_by_id   = otx2_nix_xstats_get_names_by_id,
++	.rxq_info_get             = otx2_nix_rxq_info_get,
++	.txq_info_get             = otx2_nix_txq_info_get,
++	.pool_ops_supported       = otx2_nix_pool_ops_supported,
+ };
+ 
+ static inline int
+diff --git a/drivers/net/octeontx2/otx2_ethdev.h b/drivers/net/octeontx2/otx2_ethdev.h
+index cfc4dfe14d11..199d5f242a2e 100644
+--- a/drivers/net/octeontx2/otx2_ethdev.h
++++ b/drivers/net/octeontx2/otx2_ethdev.h
+@@ -274,6 +274,11 @@ otx2_eth_pmd_priv(struct rte_eth_dev *eth_dev)
+ /* Ops */
+ void otx2_nix_info_get(struct rte_eth_dev *eth_dev,
+ 		       struct rte_eth_dev_info *dev_info);
++int otx2_nix_pool_ops_supported(struct rte_eth_dev *eth_dev, const char *pool);
++void otx2_nix_rxq_info_get(struct rte_eth_dev *eth_dev, uint16_t queue_id,
++			   struct rte_eth_rxq_info *qinfo);
++void otx2_nix_txq_info_get(struct rte_eth_dev *eth_dev, uint16_t queue_id,
++			   struct rte_eth_txq_info *qinfo);
+ 
+ void otx2_nix_promisc_config(struct rte_eth_dev *eth_dev, int en);
+ void otx2_nix_promisc_enable(struct rte_eth_dev *eth_dev);
+diff --git a/drivers/net/octeontx2/otx2_ethdev_ops.c b/drivers/net/octeontx2/otx2_ethdev_ops.c
+index 1c935b627e5a..eda5f8a0189f 100644
+--- a/drivers/net/octeontx2/otx2_ethdev_ops.c
++++ b/drivers/net/octeontx2/otx2_ethdev_ops.c
+@@ -2,6 +2,8 @@
+  * Copyright(C) 2019 Marvell International Ltd.
+  */
+ 
++#include <rte_mbuf_pool_ops.h>
++
+ #include "otx2_ethdev.h"
+ 
+ static void
+@@ -86,6 +88,55 @@ otx2_nix_allmulticast_disable(struct rte_eth_dev *eth_dev)
+ 	nix_allmulticast_config(eth_dev, 0);
+ }
+ 
++void
++otx2_nix_rxq_info_get(struct rte_eth_dev *eth_dev, uint16_t queue_id,
++		      struct rte_eth_rxq_info *qinfo)
++{
++	struct otx2_eth_rxq *rxq;
++
++	rxq = eth_dev->data->rx_queues[queue_id];
++
++	qinfo->mp = rxq->pool;
++	qinfo->scattered_rx = eth_dev->data->scattered_rx;
++	qinfo->nb_desc = rxq->qconf.nb_desc;
++
++	qinfo->conf.rx_free_thresh = 0;
++	qinfo->conf.rx_drop_en = 0;
++	qinfo->conf.rx_deferred_start = 0;
++	qinfo->conf.offloads = rxq->offloads;
++}
++
++void
++otx2_nix_txq_info_get(struct rte_eth_dev *eth_dev, uint16_t queue_id,
++		      struct rte_eth_txq_info *qinfo)
++{
++	struct otx2_eth_txq *txq;
++
++	txq = eth_dev->data->tx_queues[queue_id];
++
++	qinfo->nb_desc = txq->qconf.nb_desc;
++
++	qinfo->conf.tx_thresh.pthresh = 0;
++	qinfo->conf.tx_thresh.hthresh = 0;
++	qinfo->conf.tx_thresh.wthresh = 0;
++
++	qinfo->conf.tx_free_thresh = 0;
++	qinfo->conf.tx_rs_thresh = 0;
++	qinfo->conf.offloads = txq->offloads;
++	qinfo->conf.tx_deferred_start = 0;
++}
++
++int
++otx2_nix_pool_ops_supported(struct rte_eth_dev *eth_dev, const char *pool)
++{
++	RTE_SET_USED(eth_dev);
++
++	if (!strcmp(pool, rte_mbuf_platform_mempool_ops()))
++		return 0;
++
++	return -ENOTSUP;
++}
++
+ void
+ otx2_nix_info_get(struct rte_eth_dev *eth_dev, struct rte_eth_dev_info *devinfo)
+ {
+-- 
+2.14.4
+

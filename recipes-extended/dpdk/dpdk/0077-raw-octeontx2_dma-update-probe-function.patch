@@ -1,0 +1,141 @@
+From 65cbfbb622d3a55ee5d73fe92c012779833e40d7 Mon Sep 17 00:00:00 2001
+From: Satha Rao <skoteshwar@marvell.com>
+Date: Fri, 5 Jul 2019 14:07:59 +0530
+Subject: [PATCH 077/154] raw/octeontx2_dma: update probe function
+
+Probe function enhanced to allocate and initialize PMD private data.
+
+Signed-off-by: Satha Rao <skoteshwar@marvell.com>
+Signed-off-by: Vamsi Attunuru <vattunuru@marvell.com>
+---
+ drivers/raw/octeontx2_dma/otx2_dpi_rawdev.c | 25 +++++++++++--
+ drivers/raw/octeontx2_dma/otx2_dpi_rawdev.h | 56 +++++++++++++++++++++++++++++
+ 2 files changed, 78 insertions(+), 3 deletions(-)
+ create mode 100644 drivers/raw/octeontx2_dma/otx2_dpi_rawdev.h
+
+diff --git a/drivers/raw/octeontx2_dma/otx2_dpi_rawdev.c b/drivers/raw/octeontx2_dma/otx2_dpi_rawdev.c
+index c363bf44df58..175177224438 100644
+--- a/drivers/raw/octeontx2_dma/otx2_dpi_rawdev.c
++++ b/drivers/raw/octeontx2_dma/otx2_dpi_rawdev.c
+@@ -16,6 +16,8 @@
+ 
+ #include <otx2_common.h>
+ 
++#include "otx2_dpi_rawdev.h"
++
+ static const struct rte_pci_id pci_dma_map[] = {
+ 	{
+ 		RTE_PCI_DEVICE(PCI_VENDOR_ID_CAVIUM,
+@@ -31,11 +33,13 @@ otx2_dpi_rawdev_probe(struct rte_pci_driver *pci_drv __rte_unused,
+ 		      struct rte_pci_device *pci_dev)
+ {
+ 	char name[RTE_RAWDEV_NAME_MAX_LEN];
++	struct dpi_vf_s *dpivf = NULL;
+ 	struct rte_rawdev *rawdev;
++	uint16_t vf_id;
+ 
+ 	/* For secondary processes, the primary has done all the work */
+ 	if (rte_eal_process_type() != RTE_PROC_PRIMARY)
+-		return 0;
++		return DPI_DMA_QUEUE_SUCCESS;
+ 
+ 	if (pci_dev->mem_resource[0].addr == NULL) {
+ 		otx2_dpi_dbg("Empty bars %p %p", pci_dev->mem_resource[0].addr,
+@@ -49,7 +53,8 @@ otx2_dpi_rawdev_probe(struct rte_pci_driver *pci_drv __rte_unused,
+ 		 pci_dev->addr.function);
+ 
+ 	/* Allocate device structure */
+-	rawdev = rte_rawdev_pmd_allocate(name, 0, rte_socket_id());
++	rawdev = rte_rawdev_pmd_allocate(name, sizeof(struct dpi_vf_s),
++					 rte_socket_id());
+ 	if (rawdev == NULL) {
+ 		otx2_err("Rawdev allocation failed");
+ 		return -EINVAL;
+@@ -58,7 +63,21 @@ otx2_dpi_rawdev_probe(struct rte_pci_driver *pci_drv __rte_unused,
+ 	rawdev->device = &pci_dev->device;
+ 	rawdev->driver_name = pci_dev->driver->driver.name;
+ 
+-	return 0;
++	dpivf = rawdev->dev_private;
++	if (dpivf->state != DPI_QUEUE_STOP) {
++		otx2_dpi_dbg("Device already started!!!");
++		return -ENODEV;
++	}
++
++	vf_id = ((pci_dev->addr.devid & 0x1F) << 3) |
++		 (pci_dev->addr.function & 0x7);
++	vf_id -= 1;
++	dpivf->state = DPI_QUEUE_START;
++	dpivf->vf_id = vf_id;
++	dpivf->vf_bar0 = (uintptr_t)pci_dev->mem_resource[0].addr;
++	dpivf->vf_bar2 = (uintptr_t)pci_dev->mem_resource[2].addr;
++
++	return DPI_DMA_QUEUE_SUCCESS;
+ }
+ 
+ static int
+diff --git a/drivers/raw/octeontx2_dma/otx2_dpi_rawdev.h b/drivers/raw/octeontx2_dma/otx2_dpi_rawdev.h
+new file mode 100644
+index 000000000000..8a672d0a687f
+--- /dev/null
++++ b/drivers/raw/octeontx2_dma/otx2_dpi_rawdev.h
+@@ -0,0 +1,56 @@
++/* SPDX-License-Identifier: BSD-3-Clause
++ * Copyright(C) 2019 Marvell International Ltd.
++ */
++
++#ifndef _DPI_RAWDEV_H_
++#define _DPI_RAWDEV_H_
++
++#define DPI_QUEUE_OPEN	0x1
++#define DPI_QUEUE_CLOSE	0x2
++
++/* DPI VF register offsets from VF_BAR0 */
++#define DPI_VDMA_EN             (0x0)
++#define DPI_VDMA_REQQ_CTL       (0x8)
++#define DPI_VDMA_DBELL          (0x10)
++#define DPI_VDMA_SADDR          (0x18)
++#define DPI_VDMA_COUNTS         (0x20)
++#define DPI_VDMA_NADDR          (0x28)
++#define DPI_VDMA_IWBUSY         (0x30)
++#define DPI_VDMA_CNT            (0x38)
++#define DPI_VF_INT              (0x100)
++#define DPI_VF_INT_W1S          (0x108)
++#define DPI_VF_INT_ENA_W1C      (0x110)
++#define DPI_VF_INT_ENA_W1S      (0x118)
++
++#define DPI_MAX_VFS             8
++#define DPI_DMA_CMD_SIZE        64
++#define DPI_CHUNK_SIZE		1024
++#define DPI_QUEUE_STOP		0x0
++#define DPI_QUEUE_START		0x1
++
++struct dpi_vf_s {
++	struct rte_pci_device *dev;
++	uint8_t state;
++	uint16_t vf_id;
++	uint8_t domain;
++	uintptr_t vf_bar0;
++	uintptr_t vf_bar2;
++
++	uint16_t pool_size_m1;
++	uint16_t index;
++	uint64_t *base_ptr;
++	void *chunk_pool;
++	struct otx2_mbox *mbox;
++};
++
++struct dpi_rawdev_conf_s {
++	void *chunk_pool;
++};
++
++enum dpi_dma_queue_result_e {
++	DPI_DMA_QUEUE_SUCCESS = 0,
++	DPI_DMA_QUEUE_NO_MEMORY = -1,
++	DPI_DMA_QUEUE_INVALID_PARAM = -2,
++};
++
++#endif /* _DPI_RAWDEV_H_ */
+-- 
+2.14.4
+

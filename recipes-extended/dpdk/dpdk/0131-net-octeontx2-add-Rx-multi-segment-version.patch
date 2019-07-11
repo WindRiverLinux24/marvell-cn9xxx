@@ -1,0 +1,211 @@
+From e08a65005c2949aed27a3515b6783c28e24dbbc0 Mon Sep 17 00:00:00 2001
+From: Nithin Dabilpuram <ndabilpuram@marvell.com>
+Date: Sun, 2 Jun 2019 15:21:32 +0530
+Subject: [PATCH 131/154] net/octeontx2: add Rx multi segment version
+
+Add multi segment version of packet Receive function.
+
+Signed-off-by: Nithin Dabilpuram <ndabilpuram@marvell.com>
+Signed-off-by: Pavan Nikhilesh <pbhagavatula@marvell.com>
+---
+ doc/guides/nics/features/octeontx2.ini     |  2 ++
+ doc/guides/nics/features/octeontx2_vec.ini |  1 +
+ doc/guides/nics/features/octeontx2_vf.ini  |  2 ++
+ doc/guides/nics/octeontx2.rst              |  2 ++
+ drivers/net/octeontx2/otx2_rx.c            | 25 ++++++++++++++
+ drivers/net/octeontx2/otx2_rx.h            | 55 +++++++++++++++++++++++++++++-
+ 6 files changed, 86 insertions(+), 1 deletion(-)
+
+diff --git a/doc/guides/nics/features/octeontx2.ini b/doc/guides/nics/features/octeontx2.ini
+index 211ff93e7261..3280cba78fff 100644
+--- a/doc/guides/nics/features/octeontx2.ini
++++ b/doc/guides/nics/features/octeontx2.ini
+@@ -24,6 +24,8 @@ Inner RSS            = Y
+ VLAN filter          = Y
+ Flow control         = Y
+ Flow API             = Y
++Jumbo frame          = Y
++Scattered Rx         = Y
+ VLAN offload         = Y
+ QinQ offload         = Y
+ Packet type parsing  = Y
+diff --git a/doc/guides/nics/features/octeontx2_vec.ini b/doc/guides/nics/features/octeontx2_vec.ini
+index 967a3757deb8..315722e60ed1 100644
+--- a/doc/guides/nics/features/octeontx2_vec.ini
++++ b/doc/guides/nics/features/octeontx2_vec.ini
+@@ -24,6 +24,7 @@ Inner RSS            = Y
+ VLAN filter          = Y
+ Flow control         = Y
+ Flow API             = Y
++Jumbo frame          = Y
+ VLAN offload         = Y
+ QinQ offload         = Y
+ Packet type parsing  = Y
+diff --git a/doc/guides/nics/features/octeontx2_vf.ini b/doc/guides/nics/features/octeontx2_vf.ini
+index 884167c88ba1..17b223221c4b 100644
+--- a/doc/guides/nics/features/octeontx2_vf.ini
++++ b/doc/guides/nics/features/octeontx2_vf.ini
+@@ -19,6 +19,8 @@ RSS reta update      = Y
+ Inner RSS            = Y
+ VLAN filter          = Y
+ Flow API             = Y
++Jumbo frame          = Y
++Scattered Rx         = Y
+ VLAN offload         = Y
+ QinQ offload         = Y
+ Packet type parsing  = Y
+diff --git a/doc/guides/nics/octeontx2.rst b/doc/guides/nics/octeontx2.rst
+index 457980acfb07..4556187ceecf 100644
+--- a/doc/guides/nics/octeontx2.rst
++++ b/doc/guides/nics/octeontx2.rst
+@@ -18,6 +18,7 @@ Features of the OCTEON TX2 Ethdev PMD are:
+ 
+ - Packet type information
+ - Promiscuous mode
++- Jumbo frames
+ - SR-IOV VF
+ - Lock-free Tx queue
+ - Multiple queues for TX and RX
+@@ -28,6 +29,7 @@ Features of the OCTEON TX2 Ethdev PMD are:
+ - Port hardware statistics
+ - Link state information
+ - Link flow control
++- Scatter-Gather IO support
+ - Debug utilities - Context dump and error interrupt support
+ - IEEE1588 timestamping
+ 
+diff --git a/drivers/net/octeontx2/otx2_rx.c b/drivers/net/octeontx2/otx2_rx.c
+index 4d5223e1054b..fca182785c4b 100644
+--- a/drivers/net/octeontx2/otx2_rx.c
++++ b/drivers/net/octeontx2/otx2_rx.c
+@@ -92,6 +92,14 @@ otx2_nix_recv_pkts_ ## name(void *rx_queue,				       \
+ {									       \
+ 	return nix_recv_pkts(rx_queue, rx_pkts, pkts, (flags));		       \
+ }									       \
++									       \
++static uint16_t __rte_noinline	__hot					       \
++otx2_nix_recv_pkts_mseg_ ## name(void *rx_queue,			       \
++			struct rte_mbuf **rx_pkts, uint16_t pkts)	       \
++{									       \
++	return nix_recv_pkts(rx_queue, rx_pkts, pkts,			       \
++			     (flags) | NIX_RX_MULTI_SEG_F);		       \
++}									       \
+ 
+ NIX_RX_FASTPATH_MODES
+ #undef R
+@@ -115,15 +123,32 @@ pick_rx_func(struct rte_eth_dev *eth_dev,
+ void
+ otx2_eth_set_rx_function(struct rte_eth_dev *eth_dev)
+ {
++	struct otx2_eth_dev *dev = otx2_eth_pmd_priv(eth_dev);
++
+ 	const eth_rx_burst_t nix_eth_rx_burst[2][2][2][2][2][2] = {
+ #define R(name, f5, f4, f3, f2, f1, f0, flags)				\
+ 	[f5][f4][f3][f2][f1][f0] =  otx2_nix_recv_pkts_ ## name,
+ 
++NIX_RX_FASTPATH_MODES
++#undef R
++	};
++
++	const eth_rx_burst_t nix_eth_rx_burst_mseg[2][2][2][2][2][2] = {
++#define R(name, f5, f4, f3, f2, f1, f0, flags)				\
++	[f5][f4][f3][f2][f1][f0] =  otx2_nix_recv_pkts_mseg_ ## name,
++
+ NIX_RX_FASTPATH_MODES
+ #undef R
+ 	};
+ 
+ 	pick_rx_func(eth_dev, nix_eth_rx_burst);
+ 
++	if (dev->rx_offloads & DEV_RX_OFFLOAD_SCATTER)
++		pick_rx_func(eth_dev, nix_eth_rx_burst_mseg);
++
++	/* Copy multi seg version with no offload for tear down sequence */
++	if (rte_eal_process_type() == RTE_PROC_PRIMARY)
++		dev->rx_pkt_burst_no_offload =
++			nix_eth_rx_burst_mseg[0][0][0][0][0][0];
+ 	rte_mb();
+ }
+diff --git a/drivers/net/octeontx2/otx2_rx.h b/drivers/net/octeontx2/otx2_rx.h
+index 629768aab729..e150f38d7ff8 100644
+--- a/drivers/net/octeontx2/otx2_rx.h
++++ b/drivers/net/octeontx2/otx2_rx.h
+@@ -23,6 +23,11 @@
+ #define NIX_RX_OFFLOAD_MARK_UPDATE_F   BIT(4)
+ #define NIX_RX_OFFLOAD_TSTAMP_F        BIT(5)
+ 
++/* Flags to control cqe_to_mbuf conversion function.
++ * Defining it from backwards to denote its been
++ * not used as offload flags to pick function
++ */
++#define NIX_RX_MULTI_SEG_F            BIT(15)
+ #define NIX_TIMESYNC_RX_OFFSET		8
+ 
+ struct otx2_timesync_info {
+@@ -133,6 +138,51 @@ nix_update_match_id(const uint16_t match_id, uint64_t ol_flags,
+ 	return ol_flags;
+ }
+ 
++static __rte_always_inline void
++nix_cqe_xtract_mseg(const struct nix_rx_parse_s *rx,
++		    struct rte_mbuf *mbuf, uint64_t rearm)
++{
++	const rte_iova_t *iova_list;
++	struct rte_mbuf *head;
++	const rte_iova_t *eol;
++	uint8_t nb_segs;
++	uint64_t sg;
++
++	sg = *(const uint64_t *)(rx + 1);
++	nb_segs = (sg >> 48) & 0x3;
++	mbuf->nb_segs = nb_segs;
++	mbuf->data_len = sg & 0xFFFF;
++	sg = sg >> 16;
++
++	eol = ((const rte_iova_t *)(rx + 1) + ((rx->desc_sizem1 + 1) << 1));
++	/* Skip SG_S and first IOVA*/
++	iova_list = ((const rte_iova_t *)(rx + 1)) + 2;
++	nb_segs--;
++
++	rearm = rearm & ~0xFFFF;
++
++	head = mbuf;
++	while (nb_segs) {
++		mbuf->next = ((struct rte_mbuf *)*iova_list) - 1;
++		mbuf = mbuf->next;
++
++		__mempool_check_cookies(mbuf->pool, (void **)&mbuf, 1, 1);
++
++		mbuf->data_len = sg & 0xFFFF;
++		sg = sg >> 16;
++		*(uint64_t *)(&mbuf->rearm_data) = rearm;
++		nb_segs--;
++		iova_list++;
++
++		if (!nb_segs && (iova_list + 1 < eol)) {
++			sg = *(const uint64_t *)(iova_list);
++			nb_segs = (sg >> 48) & 0x3;
++			head->nb_segs += nb_segs;
++			iova_list = (const rte_iova_t *)(iova_list + 1);
++		}
++	}
++}
++
+ static __rte_always_inline void
+ otx2_nix_cqe_to_mbuf(const struct nix_cqe_hdr_s *cq, const uint32_t tag,
+ 		     struct rte_mbuf *mbuf, const void *lookup_mem,
+@@ -178,7 +228,10 @@ otx2_nix_cqe_to_mbuf(const struct nix_cqe_hdr_s *cq, const uint32_t tag,
+ 	*(uint64_t *)(&mbuf->rearm_data) = val;
+ 	mbuf->pkt_len = len;
+ 
+-	mbuf->data_len = len;
++	if (flag & NIX_RX_MULTI_SEG_F)
++		nix_cqe_xtract_mseg(rx, mbuf, val);
++	else
++		mbuf->data_len = len;
+ }
+ 
+ #define CKSUM_F NIX_RX_OFFLOAD_CHECKSUM_F
+-- 
+2.14.4
+

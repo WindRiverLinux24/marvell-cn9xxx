@@ -1,0 +1,221 @@
+From 9a8b476f80a75ab7171b7e3488ba53159977f80d Mon Sep 17 00:00:00 2001
+From: Pavan Nikhilesh <pbhagavatula@marvell.com>
+Date: Fri, 28 Jun 2019 23:53:37 +0530
+Subject: [PATCH 056/154] event/octeontx2: support event timer
+
+Add event timer adapter aka TIM initialization on SSO probe.
+
+Signed-off-by: Pavan Nikhilesh <pbhagavatula@marvell.com>
+---
+ doc/guides/eventdevs/octeontx2.rst       |  6 +++
+ drivers/event/octeontx2/Makefile         |  1 +
+ drivers/event/octeontx2/meson.build      |  1 +
+ drivers/event/octeontx2/otx2_evdev.c     |  3 ++
+ drivers/event/octeontx2/otx2_tim_evdev.c | 78 ++++++++++++++++++++++++++++++++
+ drivers/event/octeontx2/otx2_tim_evdev.h | 36 +++++++++++++++
+ 6 files changed, 125 insertions(+)
+ create mode 100644 drivers/event/octeontx2/otx2_tim_evdev.c
+ create mode 100644 drivers/event/octeontx2/otx2_tim_evdev.h
+
+diff --git a/doc/guides/eventdevs/octeontx2.rst b/doc/guides/eventdevs/octeontx2.rst
+index 562a83d0709c..98d0dfb6ff15 100644
+--- a/doc/guides/eventdevs/octeontx2.rst
++++ b/doc/guides/eventdevs/octeontx2.rst
+@@ -28,6 +28,10 @@ Features of the OCTEON TX2 SSO PMD are:
+ - Open system with configurable amount of outstanding events limited only by
+   DRAM
+ - HW accelerated dequeue timeout support to enable power management
++- HW managed event timers support through TIM, with high precision and
++  time granularity of 2.5us.
++- Up to 256 TIM rings aka event timer adapters.
++- Up to 8 rings traversed in parallel.
+ 
+ Prerequisites and Compilation procedure
+ ---------------------------------------
+@@ -102,3 +106,5 @@ Debugging Options
+    +===+============+=======================================================+
+    | 1 | SSO        | --log-level='pmd\.event\.octeontx2,8'                 |
+    +---+------------+-------------------------------------------------------+
++   | 2 | TIM        | --log-level='pmd\.event\.octeontx2\.timer,8'          |
++   +---+------------+-------------------------------------------------------+
+diff --git a/drivers/event/octeontx2/Makefile b/drivers/event/octeontx2/Makefile
+index ea07909d2562..e61b07f0e6f0 100644
+--- a/drivers/event/octeontx2/Makefile
++++ b/drivers/event/octeontx2/Makefile
+@@ -36,6 +36,7 @@ LIBABIVER := 1
+ SRCS-$(CONFIG_RTE_LIBRTE_PMD_OCTEONTX2_EVENTDEV) += otx2_worker_dual.c
+ SRCS-$(CONFIG_RTE_LIBRTE_PMD_OCTEONTX2_EVENTDEV) += otx2_worker.c
+ SRCS-$(CONFIG_RTE_LIBRTE_PMD_OCTEONTX2_EVENTDEV) += otx2_evdev.c
++SRCS-$(CONFIG_RTE_LIBRTE_PMD_OCTEONTX2_EVENTDEV) += otx2_tim_evdev.c
+ SRCS-$(CONFIG_RTE_LIBRTE_PMD_OCTEONTX2_EVENTDEV) += otx2_evdev_selftest.c
+ SRCS-$(CONFIG_RTE_LIBRTE_PMD_OCTEONTX2_EVENTDEV) += otx2_evdev_irq.c
+ 
+diff --git a/drivers/event/octeontx2/meson.build b/drivers/event/octeontx2/meson.build
+index 470564b08449..ad7f2e084f05 100644
+--- a/drivers/event/octeontx2/meson.build
++++ b/drivers/event/octeontx2/meson.build
+@@ -7,6 +7,7 @@ sources = files('otx2_worker.c',
+ 		'otx2_evdev.c',
+ 		'otx2_evdev_irq.c',
+ 		'otx2_evdev_selftest.c',
++		'otx2_tim_evdev.c',
+ 		)
+ 
+ allow_experimental_apis = true
+diff --git a/drivers/event/octeontx2/otx2_evdev.c b/drivers/event/octeontx2/otx2_evdev.c
+index c5a1509548fa..a716167b3c81 100644
+--- a/drivers/event/octeontx2/otx2_evdev.c
++++ b/drivers/event/octeontx2/otx2_evdev.c
+@@ -15,6 +15,7 @@
+ #include "otx2_evdev_stats.h"
+ #include "otx2_evdev.h"
+ #include "otx2_irq.h"
++#include "otx2_tim_evdev.h"
+ 
+ static inline int
+ sso_get_msix_offsets(const struct rte_eventdev *event_dev)
+@@ -1310,6 +1311,7 @@ otx2_sso_init(struct rte_eventdev *event_dev)
+ 		event_dev->dev_ops->dev_selftest();
+ 	}
+ 
++	otx2_tim_init(pci_dev, (struct otx2_dev *)dev);
+ 
+ 	return 0;
+ 
+@@ -1345,6 +1347,7 @@ otx2_sso_fini(struct rte_eventdev *event_dev)
+ 		return -EAGAIN;
+ 	}
+ 
++	otx2_tim_fini();
+ 	otx2_dev_fini(pci_dev, dev);
+ 
+ 	return 0;
+diff --git a/drivers/event/octeontx2/otx2_tim_evdev.c b/drivers/event/octeontx2/otx2_tim_evdev.c
+new file mode 100644
+index 000000000000..004701f6477b
+--- /dev/null
++++ b/drivers/event/octeontx2/otx2_tim_evdev.c
+@@ -0,0 +1,78 @@
++/* SPDX-License-Identifier: BSD-3-Clause
++ * Copyright(C) 2019 Marvell International Ltd.
++ */
++
++#include "otx2_evdev.h"
++#include "otx2_tim_evdev.h"
++
++void
++otx2_tim_init(struct rte_pci_device *pci_dev, struct otx2_dev *cmn_dev)
++{
++	struct rsrc_attach_req *atch_req;
++	struct free_rsrcs_rsp *rsrc_cnt;
++	const struct rte_memzone *mz;
++	struct otx2_tim_evdev *dev;
++	int rc;
++
++	if (rte_eal_process_type() != RTE_PROC_PRIMARY)
++		return;
++
++	mz = rte_memzone_reserve(RTE_STR(OTX2_TIM_EVDEV_NAME),
++				 sizeof(struct otx2_tim_evdev),
++				 rte_socket_id(), 0);
++	if (mz == NULL) {
++		otx2_tim_dbg("Unable to allocate memory for TIM Event device");
++		return;
++	}
++
++	dev = mz->addr;
++	dev->pci_dev = pci_dev;
++	dev->mbox = cmn_dev->mbox;
++	dev->bar2 = cmn_dev->bar2;
++
++	otx2_mbox_alloc_msg_free_rsrc_cnt(dev->mbox);
++	rc = otx2_mbox_process_msg(dev->mbox, (void *)&rsrc_cnt);
++	if (rc < 0) {
++		otx2_err("Unable to get free rsrc count.");
++		goto mz_free;
++	}
++
++	dev->nb_rings = rsrc_cnt->tim;
++
++	if (!dev->nb_rings) {
++		otx2_tim_dbg("No TIM Logical functions provisioned.");
++		goto mz_free;
++	}
++
++	atch_req = otx2_mbox_alloc_msg_attach_resources(dev->mbox);
++	atch_req->modify = true;
++	atch_req->timlfs = dev->nb_rings;
++
++	rc = otx2_mbox_process(dev->mbox);
++	if (rc < 0) {
++		otx2_err("Unable to attach TIM rings.");
++		goto mz_free;
++	}
++
++	return;
++
++mz_free:
++	rte_memzone_free(mz);
++}
++
++void
++otx2_tim_fini(void)
++{
++	struct otx2_tim_evdev *dev = tim_priv_get();
++	struct rsrc_detach_req *dtch_req;
++
++	if (rte_eal_process_type() != RTE_PROC_PRIMARY)
++		return;
++
++	dtch_req = otx2_mbox_alloc_msg_detach_resources(dev->mbox);
++	dtch_req->partial = true;
++	dtch_req->timlfs = true;
++
++	otx2_mbox_process(dev->mbox);
++	rte_memzone_free(rte_memzone_lookup(RTE_STR(OTX2_TIM_EVDEV_NAME)));
++}
+diff --git a/drivers/event/octeontx2/otx2_tim_evdev.h b/drivers/event/octeontx2/otx2_tim_evdev.h
+new file mode 100644
+index 000000000000..9f7aeb7df442
+--- /dev/null
++++ b/drivers/event/octeontx2/otx2_tim_evdev.h
+@@ -0,0 +1,36 @@
++/* SPDX-License-Identifier: BSD-3-Clause
++ * Copyright(C) 2019 Marvell International Ltd.
++ */
++
++#ifndef __OTX2_TIM_EVDEV_H__
++#define __OTX2_TIM_EVDEV_H__
++
++#include <rte_event_timer_adapter.h>
++
++#include "otx2_dev.h"
++
++#define OTX2_TIM_EVDEV_NAME otx2_tim_eventdev
++
++struct otx2_tim_evdev {
++	struct rte_pci_device *pci_dev;
++	struct otx2_mbox *mbox;
++	uint16_t nb_rings;
++	uintptr_t bar2;
++};
++
++static inline struct otx2_tim_evdev *
++tim_priv_get(void)
++{
++	const struct rte_memzone *mz;
++
++	mz = rte_memzone_lookup(RTE_STR(OTX2_TIM_EVDEV_NAME));
++	if (mz == NULL)
++		return NULL;
++
++	return mz->addr;
++}
++
++void otx2_tim_init(struct rte_pci_device *pci_dev, struct otx2_dev *cmn_dev);
++void otx2_tim_fini(void);
++
++#endif /* __OTX2_TIM_EVDEV_H__ */
+-- 
+2.14.4
+

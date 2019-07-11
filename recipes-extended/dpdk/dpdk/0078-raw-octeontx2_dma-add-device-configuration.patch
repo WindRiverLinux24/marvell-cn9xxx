@@ -1,0 +1,320 @@
+From e0d5f4bdac5e0f1f8aa8b974518c62d758c881e2 Mon Sep 17 00:00:00 2001
+From: Satha Rao <skoteshwar@marvell.com>
+Date: Fri, 5 Jul 2019 14:08:00 +0530
+Subject: [PATCH 078/154] raw/octeontx2_dma: add device configuration
+
+Register dev_configure API to configure DPI PCI devices.
+After successful initialization send message to PF to open
+corresponding DPI DMA queue. At present hardware doesn't
+support mail box for DPI, so PMD to PF communication uses
+pre build kernel devfs.
+
+Signed-off-by: Satha Rao <skoteshwar@marvell.com>
+Signed-off-by: Vamsi Attunuru <vattunuru@marvell.com>
+---
+ doc/guides/rawdevs/octeontx2_dma.rst        |  20 ++++++
+ drivers/raw/octeontx2_dma/Makefile          |  12 +++-
+ drivers/raw/octeontx2_dma/meson.build       |  14 +++-
+ drivers/raw/octeontx2_dma/otx2_dpi_msg.c    | 105 ++++++++++++++++++++++++++++
+ drivers/raw/octeontx2_dma/otx2_dpi_rawdev.c |  55 +++++++++++++++
+ drivers/raw/octeontx2_dma/otx2_dpi_rawdev.h |   6 ++
+ 6 files changed, 210 insertions(+), 2 deletions(-)
+ create mode 100644 drivers/raw/octeontx2_dma/otx2_dpi_msg.c
+
+diff --git a/doc/guides/rawdevs/octeontx2_dma.rst b/doc/guides/rawdevs/octeontx2_dma.rst
+index 34807bde4fa8..5e926d10df69 100644
+--- a/doc/guides/rawdevs/octeontx2_dma.rst
++++ b/doc/guides/rawdevs/octeontx2_dma.rst
+@@ -62,3 +62,23 @@ entry, `sriov_numvfs` for the corresponding PF driver.
+ 
+ Once the required VFs are enabled, to be accessible from DPDK, VFs need to be
+ bound to vfio-pci driver.
++
++Device Configuration
++--------------------
++
++Configuring DMA rawdev device is done using the ``rte_rawdev_configure()``
++API, which takes the mempool as parameter. PMD uses this pool to submit DMA
++commands to HW.
++
++The following code shows how the device is configured
++
++.. code-block:: c
++
++   struct dpi_rawdev_conf_s conf = {0};
++   struct rte_rawdev_info rdev_info = {.dev_private = &conf};
++
++   conf.chunk_pool = (void *)rte_mempool_create_empty(...);
++   rte_mempool_set_ops_byname(conf.chunk_pool, rte_mbuf_platform_mempool_ops(), NULL);
++   rte_mempool_populate_default(conf.chunk_pool);
++
++   rte_rawdev_configure(dev_id, (rte_rawdev_obj_t)&rdev_info);
+diff --git a/drivers/raw/octeontx2_dma/Makefile b/drivers/raw/octeontx2_dma/Makefile
+index 1892c1e27b30..e1993fe0485f 100644
+--- a/drivers/raw/octeontx2_dma/Makefile
++++ b/drivers/raw/octeontx2_dma/Makefile
+@@ -9,9 +9,18 @@ LIB = librte_pmd_octeontx2_dma.a
+ 
+ CFLAGS += -O3 $(WERROR_FLAGS)
+ CFLAGS += -I$(RTE_SDK)/drivers/common/octeontx2/
++CFLAGS += -I$(RTE_SDK)/drivers/mempool/octeontx2/
+ CFLAGS += -I$(RTE_SDK)/drivers/raw/octeontx2_dma/
+ LDLIBS += -lrte_eal -lrte_rawdev -lrte_bus_pci
+-LDLIBS += -lrte_common_octeontx2
++LDLIBS += -lrte_common_octeontx2 -lrte_mempool
++
++ifneq ($(CONFIG_RTE_ARCH_64),y)
++CFLAGS += -Wno-int-to-pointer-cast
++CFLAGS += -Wno-pointer-to-int-cast
++ifeq ($(CONFIG_RTE_TOOLCHAIN_ICC),y)
++CFLAGS += -diag-disable 2259
++endif
++endif
+ 
+ EXPORT_MAP := rte_pmd_octeontx2_dma_version.map
+ 
+@@ -21,5 +30,6 @@ LIBABIVER := 1
+ # all source are stored in SRCS-y
+ #
+ SRCS-$(CONFIG_RTE_LIBRTE_PMD_OCTEONTX2_DMA_RAWDEV) += otx2_dpi_rawdev.c
++SRCS-$(CONFIG_RTE_LIBRTE_PMD_OCTEONTX2_DMA_RAWDEV) += otx2_dpi_msg.c
+ 
+ include $(RTE_SDK)/mk/rte.lib.mk
+diff --git a/drivers/raw/octeontx2_dma/meson.build b/drivers/raw/octeontx2_dma/meson.build
+index 76a7b1645c8c..8ea182812fe1 100644
+--- a/drivers/raw/octeontx2_dma/meson.build
++++ b/drivers/raw/octeontx2_dma/meson.build
+@@ -3,4 +3,16 @@
+ #
+ 
+ deps += ['bus_pci', 'common_octeontx2', 'rawdev']
+-sources = files('otx2_dpi_rawdev.c')
++sources = files('otx2_dpi_rawdev.c', 'otx2_dpi_msg.c')
++
++extra_flags = []
++# This integrated controller runs only on a arm64 machine, remove 32bit warnings
++if not dpdk_conf.get('RTE_ARCH_64')
++	extra_flags += ['-Wno-int-to-pointer-cast', '-Wno-pointer-to-int-cast']
++endif
++
++foreach flag: extra_flags
++	if cc.has_argument(flag)
++		cflags += flag
++	endif
++endforeach
+diff --git a/drivers/raw/octeontx2_dma/otx2_dpi_msg.c b/drivers/raw/octeontx2_dma/otx2_dpi_msg.c
+new file mode 100644
+index 000000000000..aa361cb8adc6
+--- /dev/null
++++ b/drivers/raw/octeontx2_dma/otx2_dpi_msg.c
+@@ -0,0 +1,105 @@
++/* SPDX-License-Identifier: BSD-3-Clause
++ * Copyright(C) 2019 Marvell International Ltd.
++ */
++
++#ifndef _DPI_MSG_H_
++#define _DPI_MSG_H_
++
++#include <dirent.h>
++#include <fcntl.h>
++#include <string.h>
++#include <unistd.h>
++
++#include "otx2_dpi_rawdev.h"
++
++/* DPI PF DBDF information macro's */
++#define DPI_PF_DBDF_DOMAIN      0
++#define DPI_PF_DBDF_BUS         5
++#define DPI_PF_DBDF_DEVICE      0
++#define DPI_PF_DBDF_FUNCTION    0
++
++#define DPI_PF_MBOX_SYSFS_ENTRY "dpi_device_config"
++
++union dpi_mbox_message_u {
++	uint64_t u[2];
++	struct dpi_mbox_message_s {
++		/* VF ID to configure */
++		uint64_t vfid           :4;
++		/* Command code */
++		uint64_t cmd            :4;
++		/* Command buffer size in 8-byte words */
++		uint64_t csize          :14;
++		/* aura of the command buffer */
++		uint64_t aura           :20;
++		/* SSO PF function */
++		uint64_t sso_pf_func    :16;
++		/* NPA PF function */
++		uint64_t npa_pf_func    :16;
++	} s;
++};
++
++static inline int
++send_msg_to_pf(const char *value, int size)
++{
++	char buff[255] = { 0 };
++	int res, fd;
++
++	res = snprintf(buff, sizeof(buff), "%s/" PCI_PRI_FMT "/%s",
++		       rte_pci_get_sysfs_path(), DPI_PF_DBDF_DOMAIN,
++		       DPI_PF_DBDF_BUS, DPI_PF_DBDF_DEVICE & 0x7,
++		       DPI_PF_DBDF_FUNCTION & 0x7, DPI_PF_MBOX_SYSFS_ENTRY);
++	if ((res < 0) || ((size_t)res > sizeof(buff)))
++		return -ERANGE;
++
++	fd = open(buff, O_WRONLY);
++	if (fd < 0)
++		return -EACCES;
++	res = write(fd, value, size);
++	close(fd);
++	if (res < 0)
++		return -EACCES;
++
++	return 0;
++}
++
++int
++otx2_dpi_queue_open(uint16_t vf_id, uint32_t size, uint32_t gaura)
++{
++	union dpi_mbox_message_u mbox_msg;
++	int ret = 0;
++
++	/* DPI PF driver expects vfid starts from index 0 */
++	mbox_msg.s.vfid = vf_id;
++	mbox_msg.s.cmd = DPI_QUEUE_OPEN;
++	mbox_msg.s.csize = size;
++	mbox_msg.s.aura = gaura;
++	mbox_msg.s.sso_pf_func = otx2_sso_pf_func_get();
++	mbox_msg.s.npa_pf_func = otx2_npa_pf_func_get();
++
++	ret = send_msg_to_pf((const char *)&mbox_msg,
++				sizeof(mbox_msg));
++	if (ret < 0)
++		otx2_dpi_dbg("Failed to send mbox message to dpi pf");
++
++	return ret;
++}
++
++int
++otx2_dpi_queue_close(uint16_t vf_id)
++{
++	union dpi_mbox_message_u mbox_msg;
++	int ret = 0;
++
++	/* DPI PF driver expects vfid starts from index 0 */
++	mbox_msg.s.vfid = vf_id;
++	mbox_msg.s.cmd = DPI_QUEUE_CLOSE;
++
++	ret = send_msg_to_pf((const char *)&mbox_msg,
++				sizeof(mbox_msg));
++	if (ret < 0)
++		otx2_dpi_dbg("Failed to send mbox message to dpi pf");
++
++	return ret;
++}
++
++#endif /* _DPI_MSG_H_ */
+diff --git a/drivers/raw/octeontx2_dma/otx2_dpi_rawdev.c b/drivers/raw/octeontx2_dma/otx2_dpi_rawdev.c
+index 175177224438..224c5e5c38ed 100644
+--- a/drivers/raw/octeontx2_dma/otx2_dpi_rawdev.c
++++ b/drivers/raw/octeontx2_dma/otx2_dpi_rawdev.c
+@@ -10,6 +10,7 @@
+ #include <rte_common.h>
+ #include <rte_eal.h>
+ #include <rte_lcore.h>
++#include <rte_mempool.h>
+ #include <rte_pci.h>
+ #include <rte_rawdev.h>
+ #include <rte_rawdev_pmd.h>
+@@ -28,6 +29,59 @@ static const struct rte_pci_id pci_dma_map[] = {
+ 	},
+ };
+ 
++/* Enable/Disable DMA queue */
++static inline int
++dma_engine_enb_dis(struct dpi_vf_s *dpivf, const bool enb)
++{
++	if (enb)
++		otx2_write64(0x1, dpivf->vf_bar0 + DPI_VDMA_EN);
++	else
++		otx2_write64(0x0, dpivf->vf_bar0 + DPI_VDMA_EN);
++
++	return DPI_DMA_QUEUE_SUCCESS;
++}
++
++static int
++otx2_dpi_rawdev_configure(const struct rte_rawdev *dev, rte_rawdev_obj_t config)
++{
++	struct dpi_rawdev_conf_s *conf = config;
++	struct dpi_vf_s *dpivf = NULL;
++	void *buf = NULL;
++	uintptr_t pool;
++	uint32_t gaura;
++
++	if (conf == NULL) {
++		otx2_dpi_dbg("NULL configuration");
++		return -EINVAL;
++	}
++	dpivf = (struct dpi_vf_s *)dev->dev_private;
++	dpivf->chunk_pool = conf->chunk_pool;
++	if (rte_mempool_get(conf->chunk_pool, &buf) || (buf == NULL)) {
++		otx2_err("Unable allocate buffer");
++		return -ENODEV;
++	}
++	dpivf->base_ptr = buf;
++	otx2_write64(0x0, dpivf->vf_bar0 + DPI_VDMA_EN);
++	dpivf->pool_size_m1 = (DPI_CHUNK_SIZE >> 3) - 2;
++	pool = (uintptr_t)((struct rte_mempool *)conf->chunk_pool)->pool_id;
++	gaura = npa_lf_aura_handle_to_aura(pool);
++	otx2_write64(0, dpivf->vf_bar0 + DPI_VDMA_REQQ_CTL);
++	otx2_write64(((uint64_t)buf >> 7) << 7,
++		     dpivf->vf_bar0 + DPI_VDMA_SADDR);
++	if (otx2_dpi_queue_open(dpivf->vf_id, DPI_CHUNK_SIZE, gaura) < 0) {
++		otx2_err("Unable to open DPI VF %d", dpivf->vf_id);
++		rte_mempool_put(conf->chunk_pool, buf);
++		return -EACCES;
++	}
++	dma_engine_enb_dis(dpivf, true);
++
++	return DPI_DMA_QUEUE_SUCCESS;
++}
++
++static const struct rte_rawdev_ops dpi_rawdev_ops = {
++	.dev_configure = otx2_dpi_rawdev_configure,
++};
++
+ static int
+ otx2_dpi_rawdev_probe(struct rte_pci_driver *pci_drv __rte_unused,
+ 		      struct rte_pci_device *pci_dev)
+@@ -60,6 +114,7 @@ otx2_dpi_rawdev_probe(struct rte_pci_driver *pci_drv __rte_unused,
+ 		return -EINVAL;
+ 	}
+ 
++	rawdev->dev_ops = &dpi_rawdev_ops;
+ 	rawdev->device = &pci_dev->device;
+ 	rawdev->driver_name = pci_dev->driver->driver.name;
+ 
+diff --git a/drivers/raw/octeontx2_dma/otx2_dpi_rawdev.h b/drivers/raw/octeontx2_dma/otx2_dpi_rawdev.h
+index 8a672d0a687f..918ae725ad41 100644
+--- a/drivers/raw/octeontx2_dma/otx2_dpi_rawdev.h
++++ b/drivers/raw/octeontx2_dma/otx2_dpi_rawdev.h
+@@ -5,6 +5,9 @@
+ #ifndef _DPI_RAWDEV_H_
+ #define _DPI_RAWDEV_H_
+ 
++#include "otx2_common.h"
++#include "otx2_mempool.h"
++
+ #define DPI_QUEUE_OPEN	0x1
+ #define DPI_QUEUE_CLOSE	0x2
+ 
+@@ -53,4 +56,7 @@ enum dpi_dma_queue_result_e {
+ 	DPI_DMA_QUEUE_INVALID_PARAM = -2,
+ };
+ 
++int otx2_dpi_queue_open(uint16_t vf_id, uint32_t size, uint32_t gaura);
++int otx2_dpi_queue_close(uint16_t vf_id);
++
+ #endif /* _DPI_RAWDEV_H_ */
+-- 
+2.14.4
+

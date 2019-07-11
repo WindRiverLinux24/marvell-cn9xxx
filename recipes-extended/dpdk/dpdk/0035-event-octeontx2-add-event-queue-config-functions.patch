@@ -1,0 +1,117 @@
+From 23c06433926c3b6b954830ddce41c05a71b62122 Mon Sep 17 00:00:00 2001
+From: Pavan Nikhilesh <pbhagavatula@marvell.com>
+Date: Fri, 28 Jun 2019 23:53:16 +0530
+Subject: [PATCH 035/154] event/octeontx2: add event queue config functions
+
+Add default config, setup and release functions for event queues i.e.
+SSO GGRPS.
+
+Signed-off-by: Pavan Nikhilesh <pbhagavatula@marvell.com>
+---
+ drivers/event/octeontx2/otx2_evdev.c | 50 ++++++++++++++++++++++++++++++++++++
+ drivers/event/octeontx2/otx2_evdev.h | 17 ++++++++++++
+ 2 files changed, 67 insertions(+)
+
+diff --git a/drivers/event/octeontx2/otx2_evdev.c b/drivers/event/octeontx2/otx2_evdev.c
+index 00996578a457..2290598d0a9c 100644
+--- a/drivers/event/octeontx2/otx2_evdev.c
++++ b/drivers/event/octeontx2/otx2_evdev.c
+@@ -142,6 +142,13 @@ sso_lf_cfg(struct otx2_sso_evdev *dev, struct otx2_mbox *mbox,
+ 	return 0;
+ }
+ 
++static void
++otx2_sso_queue_release(struct rte_eventdev *event_dev, uint8_t queue_id)
++{
++	RTE_SET_USED(event_dev);
++	RTE_SET_USED(queue_id);
++}
++
+ static int
+ sso_configure_ports(const struct rte_eventdev *event_dev)
+ {
+@@ -294,10 +301,53 @@ otx2_sso_configure(const struct rte_eventdev *event_dev)
+ 	return rc;
+ }
+ 
++static void
++otx2_sso_queue_def_conf(struct rte_eventdev *event_dev, uint8_t queue_id,
++			struct rte_event_queue_conf *queue_conf)
++{
++	RTE_SET_USED(event_dev);
++	RTE_SET_USED(queue_id);
++
++	queue_conf->nb_atomic_flows = (1ULL << 20);
++	queue_conf->nb_atomic_order_sequences = (1ULL << 20);
++	queue_conf->event_queue_cfg = RTE_EVENT_QUEUE_CFG_ALL_TYPES;
++	queue_conf->priority = RTE_EVENT_DEV_PRIORITY_NORMAL;
++}
++
++static int
++otx2_sso_queue_setup(struct rte_eventdev *event_dev, uint8_t queue_id,
++		     const struct rte_event_queue_conf *queue_conf)
++{
++	struct otx2_sso_evdev *dev = sso_pmd_priv(event_dev);
++	struct otx2_mbox *mbox = dev->mbox;
++	struct sso_grp_priority *req;
++	int rc;
++
++	sso_func_trace("Queue=%d prio=%d", queue_id, queue_conf->priority);
++
++	req = otx2_mbox_alloc_msg_sso_grp_set_priority(dev->mbox);
++	req->grp = queue_id;
++	req->weight = 0xFF;
++	req->affinity = 0xFF;
++	/* Normalize <0-255> to <0-7> */
++	req->priority = queue_conf->priority / 32;
++
++	rc = otx2_mbox_process(mbox);
++	if (rc < 0) {
++		otx2_err("Failed to set priority queue=%d", queue_id);
++		return rc;
++	}
++
++	return 0;
++}
++
+ /* Initialize and register event driver with DPDK Application */
+ static struct rte_eventdev_ops otx2_sso_ops = {
+ 	.dev_infos_get    = otx2_sso_info_get,
+ 	.dev_configure    = otx2_sso_configure,
++	.queue_def_conf   = otx2_sso_queue_def_conf,
++	.queue_setup      = otx2_sso_queue_setup,
++	.queue_release    = otx2_sso_queue_release,
+ };
+ 
+ static int
+diff --git a/drivers/event/octeontx2/otx2_evdev.h b/drivers/event/octeontx2/otx2_evdev.h
+index feb4ed6f4796..b46402771459 100644
+--- a/drivers/event/octeontx2/otx2_evdev.h
++++ b/drivers/event/octeontx2/otx2_evdev.h
+@@ -18,6 +18,23 @@
+ #define OTX2_SSO_MAX_VHGRP                  RTE_EVENT_MAX_QUEUES_PER_DEV
+ #define OTX2_SSO_MAX_VHWS                   (UINT8_MAX)
+ 
++/* SSO LF register offsets (BAR2) */
++#define SSO_LF_GGRP_OP_ADD_WORK0            (0x0ull)
++#define SSO_LF_GGRP_OP_ADD_WORK1            (0x8ull)
++
++#define SSO_LF_GGRP_QCTL                    (0x20ull)
++#define SSO_LF_GGRP_EXE_DIS                 (0x80ull)
++#define SSO_LF_GGRP_INT                     (0x100ull)
++#define SSO_LF_GGRP_INT_W1S                 (0x108ull)
++#define SSO_LF_GGRP_INT_ENA_W1S             (0x110ull)
++#define SSO_LF_GGRP_INT_ENA_W1C             (0x118ull)
++#define SSO_LF_GGRP_INT_THR                 (0x140ull)
++#define SSO_LF_GGRP_INT_CNT                 (0x180ull)
++#define SSO_LF_GGRP_XAQ_CNT                 (0x1b0ull)
++#define SSO_LF_GGRP_AQ_CNT                  (0x1c0ull)
++#define SSO_LF_GGRP_AQ_THR                  (0x1e0ull)
++#define SSO_LF_GGRP_MISC_CNT                (0x200ull)
++
+ #define USEC2NSEC(__us)                 ((__us) * 1E3)
+ 
+ enum otx2_sso_lf_type {
+-- 
+2.14.4
+

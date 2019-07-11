@@ -1,0 +1,43 @@
+From ebe8d3598e4867719de7959c633805774f19c804 Mon Sep 17 00:00:00 2001
+From: Kevin Hao <kexin.hao@windriver.com>
+Date: Tue, 6 Aug 2019 15:56:29 +0800
+Subject: [PATCH 153/154] net/octeontx2: Hard code the max supported MAC
+ entries to 1
+
+At the moment the kernel driver of RVU still don't support to query the
+max number of supported MAC entries, so hard code it to 1. This is also
+compatible with the code in the Marvell DK10.0-ED1001 CN96xx.
+
+Signed-off-by: Kevin Hao <kexin.hao@windriver.com>
+---
+ drivers/net/octeontx2/otx2_ethdev.c | 14 +-------------
+ 1 file changed, 1 insertion(+), 13 deletions(-)
+
+diff --git a/drivers/net/octeontx2/otx2_ethdev.c b/drivers/net/octeontx2/otx2_ethdev.c
+index 25ad135b9d11..d83f8094750e 100644
+--- a/drivers/net/octeontx2/otx2_ethdev.c
++++ b/drivers/net/octeontx2/otx2_ethdev.c
+@@ -1747,19 +1747,7 @@ otx2_eth_dev_init(struct rte_eth_dev *eth_dev)
+ 	if (rc)
+ 		goto mbox_detach;
+ 
+-	/* Get maximum number of supported MAC entries */
+-	max_entries = otx2_cgx_mac_max_entries_get(dev);
+-	if (max_entries < 0) {
+-		otx2_err("Failed to get max entries for mac addr");
+-		rc = -ENOTSUP;
+-		goto unregister_irq;
+-	}
+-
+-	/* For VFs, returned max_entries will be 0. But to keep default MAC
+-	 * address, one entry must be allocated. So setting up to 1.
+-	 */
+-	if (max_entries == 0)
+-		max_entries = 1;
++	max_entries = 1;
+ 
+ 	eth_dev->data->mac_addrs = rte_zmalloc("mac_addr", max_entries *
+ 					       ETHER_ADDR_LEN, 0);
+-- 
+2.14.4
+

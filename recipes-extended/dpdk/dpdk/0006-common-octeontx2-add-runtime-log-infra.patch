@@ -1,0 +1,203 @@
+From a943f65a63354cc4004787693146a799845d0402 Mon Sep 17 00:00:00 2001
+From: Jerin Jacob <jerinj@marvell.com>
+Date: Sat, 22 Jun 2019 18:53:55 +0530
+Subject: [PATCH 006/154] common/octeontx2: add runtime log infra
+
+Various consumers of this common code need runtime
+logging infrastructure. This patch adds the same.
+
+Signed-off-by: Jerin Jacob <jerinj@marvell.com>
+---
+ drivers/common/octeontx2/Makefile                  |  1 +
+ drivers/common/octeontx2/meson.build               |  1 +
+ drivers/common/octeontx2/otx2_common.c             | 85 ++++++++++++++++++++++
+ drivers/common/octeontx2/otx2_common.h             | 36 +++++++++
+ .../octeontx2/rte_common_octeontx2_version.map     | 11 +++
+ 5 files changed, 134 insertions(+)
+ create mode 100644 drivers/common/octeontx2/otx2_common.c
+
+diff --git a/drivers/common/octeontx2/Makefile b/drivers/common/octeontx2/Makefile
+index e5737532a0b1..3fd67f0abaa1 100644
+--- a/drivers/common/octeontx2/Makefile
++++ b/drivers/common/octeontx2/Makefile
+@@ -25,6 +25,7 @@ LIBABIVER := 1
+ # all source are stored in SRCS-y
+ #
+ SRCS-y += otx2_mbox.c
++SRCS-y += otx2_common.c
+ 
+ LDLIBS += -lrte_eal
+ LDLIBS += -lrte_ethdev
+diff --git a/drivers/common/octeontx2/meson.build b/drivers/common/octeontx2/meson.build
+index 34f8aaea75a5..4771b1942f60 100644
+--- a/drivers/common/octeontx2/meson.build
++++ b/drivers/common/octeontx2/meson.build
+@@ -4,6 +4,7 @@
+ 
+ sources= files(
+ 		'otx2_mbox.c',
++		'otx2_common.c',
+ 	       )
+ 
+ extra_flags = []
+diff --git a/drivers/common/octeontx2/otx2_common.c b/drivers/common/octeontx2/otx2_common.c
+new file mode 100644
+index 000000000000..a4b91b4f1a53
+--- /dev/null
++++ b/drivers/common/octeontx2/otx2_common.c
+@@ -0,0 +1,85 @@
++/* SPDX-License-Identifier: BSD-3-Clause
++ * Copyright(C) 2019 Marvell International Ltd.
++ */
++
++#include <rte_log.h>
++
++#include "otx2_common.h"
++
++/**
++ * @internal
++ */
++int otx2_logtype_base;
++/**
++ * @internal
++ */
++int otx2_logtype_mbox;
++/**
++ * @internal
++ */
++int otx2_logtype_npa;
++/**
++ * @internal
++ */
++int otx2_logtype_nix;
++/**
++ * @internal
++ */
++int otx2_logtype_npc;
++/**
++ * @internal
++ */
++int otx2_logtype_tm;
++/**
++ * @internal
++ */
++int otx2_logtype_sso;
++/**
++ * @internal
++ */
++int otx2_logtype_tim;
++/**
++ * @internal
++ */
++int otx2_logtype_dpi;
++
++RTE_INIT(otx2_log_init);
++static void
++otx2_log_init(void)
++{
++	otx2_logtype_base = rte_log_register("pmd.octeontx2.base");
++	if (otx2_logtype_base >= 0)
++		rte_log_set_level(otx2_logtype_base, RTE_LOG_NOTICE);
++
++	otx2_logtype_mbox = rte_log_register("pmd.octeontx2.mbox");
++	if (otx2_logtype_mbox >= 0)
++		rte_log_set_level(otx2_logtype_mbox, RTE_LOG_NOTICE);
++
++	otx2_logtype_npa = rte_log_register("pmd.mempool.octeontx2");
++	if (otx2_logtype_npa >= 0)
++		rte_log_set_level(otx2_logtype_npa, RTE_LOG_NOTICE);
++
++	otx2_logtype_nix = rte_log_register("pmd.net.octeontx2");
++	if (otx2_logtype_nix >= 0)
++		rte_log_set_level(otx2_logtype_nix, RTE_LOG_NOTICE);
++
++	otx2_logtype_npc = rte_log_register("pmd.net.octeontx2.flow");
++	if (otx2_logtype_npc >= 0)
++		rte_log_set_level(otx2_logtype_npc, RTE_LOG_NOTICE);
++
++	otx2_logtype_tm = rte_log_register("pmd.net.octeontx2.tm");
++	if (otx2_logtype_tm >= 0)
++		rte_log_set_level(otx2_logtype_tm, RTE_LOG_NOTICE);
++
++	otx2_logtype_sso = rte_log_register("pmd.event.octeontx2");
++	if (otx2_logtype_sso >= 0)
++		rte_log_set_level(otx2_logtype_sso, RTE_LOG_NOTICE);
++
++	otx2_logtype_tim = rte_log_register("pmd.event.octeontx2.timer");
++	if (otx2_logtype_tim >= 0)
++		rte_log_set_level(otx2_logtype_tim, RTE_LOG_NOTICE);
++
++	otx2_logtype_dpi = rte_log_register("pmd.raw.octeontx2.dpi");
++	if (otx2_logtype_dpi >= 0)
++		rte_log_set_level(otx2_logtype_dpi, RTE_LOG_NOTICE);
++}
+diff --git a/drivers/common/octeontx2/otx2_common.h b/drivers/common/octeontx2/otx2_common.h
+index b0c19266b238..58fcf5a414cd 100644
+--- a/drivers/common/octeontx2/otx2_common.h
++++ b/drivers/common/octeontx2/otx2_common.h
+@@ -33,6 +33,42 @@
+ #define __hot   __attribute__((hot))
+ #endif
+ 
++/* Log */
++extern int otx2_logtype_base;
++extern int otx2_logtype_mbox;
++extern int otx2_logtype_npa;
++extern int otx2_logtype_nix;
++extern int otx2_logtype_sso;
++extern int otx2_logtype_npc;
++extern int otx2_logtype_tm;
++extern int otx2_logtype_tim;
++extern int otx2_logtype_dpi;
++
++#define OTX2_CLNRM  "\x1b[0m"
++#define OTX2_CLRED  "\x1b[31m"
++
++#define otx2_err(fmt, args...)						\
++	RTE_LOG(ERR, PMD, ""OTX2_CLRED"%s():%u " fmt OTX2_CLNRM"\n",	\
++				__func__, __LINE__, ## args)
++
++#define otx2_info(fmt, args...)						\
++	RTE_LOG(INFO, PMD, fmt"\n", ## args)
++
++#define otx2_dbg(subsystem, fmt, args...)				\
++	rte_log(RTE_LOG_DEBUG, otx2_logtype_ ## subsystem,		\
++		"[%s] %s():%u " fmt "\n",				\
++		 #subsystem, __func__, __LINE__, ##args)
++
++#define otx2_base_dbg(fmt, ...) otx2_dbg(base, fmt, ##__VA_ARGS__)
++#define otx2_mbox_dbg(fmt, ...) otx2_dbg(mbox, fmt, ##__VA_ARGS__)
++#define otx2_npa_dbg(fmt, ...) otx2_dbg(npa, fmt, ##__VA_ARGS__)
++#define otx2_nix_dbg(fmt, ...) otx2_dbg(nix, fmt, ##__VA_ARGS__)
++#define otx2_sso_dbg(fmt, ...) otx2_dbg(sso, fmt, ##__VA_ARGS__)
++#define otx2_npc_dbg(fmt, ...) otx2_dbg(npc, fmt, ##__VA_ARGS__)
++#define otx2_tm_dbg(fmt, ...) otx2_dbg(tm, fmt, ##__VA_ARGS__)
++#define otx2_tim_dbg(fmt, ...) otx2_dbg(tim, fmt, ##__VA_ARGS__)
++#define otx2_dpi_dbg(fmt, ...) otx2_dbg(dpi, fmt, ##__VA_ARGS__)
++
+ /* IO Access */
+ #define otx2_read64(addr) rte_read64_relaxed((void *)(addr))
+ #define otx2_write64(val, addr) rte_write64_relaxed((val), (void *)(addr))
+diff --git a/drivers/common/octeontx2/rte_common_octeontx2_version.map b/drivers/common/octeontx2/rte_common_octeontx2_version.map
+index 9a61188cd520..02f03e17763d 100644
+--- a/drivers/common/octeontx2/rte_common_octeontx2_version.map
++++ b/drivers/common/octeontx2/rte_common_octeontx2_version.map
+@@ -1,4 +1,15 @@
+ DPDK_19.08 {
++	global:
++
++	otx2_logtype_base;
++	otx2_logtype_dpi;
++	otx2_logtype_mbox;
++	otx2_logtype_npa;
++	otx2_logtype_npc;
++	otx2_logtype_nix;
++	otx2_logtype_sso;
++	otx2_logtype_tm;
++	otx2_logtype_tim;
+ 
+ 	local: *;
+ };
+-- 
+2.14.4
+

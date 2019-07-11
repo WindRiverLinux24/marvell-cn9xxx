@@ -1,0 +1,187 @@
+From 9ce4f7f61c52c8523c3bf7eb169edf2493a665c5 Mon Sep 17 00:00:00 2001
+From: Pavan Nikhilesh <pbhagavatula@marvell.com>
+Date: Fri, 28 Jun 2019 23:53:41 +0530
+Subject: [PATCH 060/154] event/octeontx2: add devargs to disable NPA
+
+If the chunks are allocated from NPA then TIM can automatically free
+them when traversing the list of chunks.
+Add devargs to disable NPA and use software mempool to manage chunks.
+
+Example:
+	--dev "0002:0e:00.0,tim_disable_npa=1"
+
+Signed-off-by: Pavan Nikhilesh <pbhagavatula@marvell.com>
+---
+ doc/guides/eventdevs/octeontx2.rst       |  9 ++++
+ drivers/event/octeontx2/otx2_tim_evdev.c | 81 +++++++++++++++++++++++---------
+ drivers/event/octeontx2/otx2_tim_evdev.h |  3 ++
+ 3 files changed, 70 insertions(+), 23 deletions(-)
+
+diff --git a/doc/guides/eventdevs/octeontx2.rst b/doc/guides/eventdevs/octeontx2.rst
+index 98d0dfb6ff15..d24f816296d0 100644
+--- a/doc/guides/eventdevs/octeontx2.rst
++++ b/doc/guides/eventdevs/octeontx2.rst
+@@ -94,6 +94,15 @@ Runtime Config Options
+ 
+     --dev "0002:0e:00.0,selftest=1"
+ 
++- ``TIM disable NPA``
++
++  By default chunks are allocated from NPA then TIM can automatically free
++  them when traversing the list of chunks. The ``tim_disable_npa`` devargs
++  parameter disables NPA and uses software mempool to manage chunks
++  For example::
++
++    --dev "0002:0e:00.0,tim_disable_npa=1"
++
+ Debugging Options
+ ~~~~~~~~~~~~~~~~~
+ 
+diff --git a/drivers/event/octeontx2/otx2_tim_evdev.c b/drivers/event/octeontx2/otx2_tim_evdev.c
+index 44a939ad91df..5517a6bc440d 100644
+--- a/drivers/event/octeontx2/otx2_tim_evdev.c
++++ b/drivers/event/octeontx2/otx2_tim_evdev.c
+@@ -2,6 +2,7 @@
+  * Copyright(C) 2019 Marvell International Ltd.
+  */
+ 
++#include <rte_kvargs.h>
+ #include <rte_malloc.h>
+ #include <rte_mbuf_pool_ops.h>
+ 
+@@ -77,33 +78,45 @@ tim_chnk_pool_create(struct otx2_tim_ring *tim_ring,
+ 	if (cache_sz > RTE_MEMPOOL_CACHE_MAX_SIZE)
+ 		cache_sz = RTE_MEMPOOL_CACHE_MAX_SIZE;
+ 
+-	/* NPA need not have cache as free is not visible to SW */
+-	tim_ring->chunk_pool = rte_mempool_create_empty(pool_name,
+-							tim_ring->nb_chunks,
+-							tim_ring->chunk_sz,
+-							0, 0, rte_socket_id(),
+-							mp_flags);
++	if (!tim_ring->disable_npa) {
++		/* NPA need not have cache as free is not visible to SW */
++		tim_ring->chunk_pool = rte_mempool_create_empty(pool_name,
++				tim_ring->nb_chunks, tim_ring->chunk_sz,
++				0, 0, rte_socket_id(), mp_flags);
+ 
+-	if (tim_ring->chunk_pool == NULL) {
+-		otx2_err("Unable to create chunkpool.");
+-		return -ENOMEM;
+-	}
++		if (tim_ring->chunk_pool == NULL) {
++			otx2_err("Unable to create chunkpool.");
++			return -ENOMEM;
++		}
+ 
+-	rc = rte_mempool_set_ops_byname(tim_ring->chunk_pool,
+-					rte_mbuf_platform_mempool_ops(), NULL);
+-	if (rc < 0) {
+-		otx2_err("Unable to set chunkpool ops");
+-		goto free;
+-	}
++		rc = rte_mempool_set_ops_byname(tim_ring->chunk_pool,
++						rte_mbuf_platform_mempool_ops(),
++						NULL);
++		if (rc < 0) {
++			otx2_err("Unable to set chunkpool ops");
++			goto free;
++		}
+ 
+-	rc = rte_mempool_populate_default(tim_ring->chunk_pool);
+-	if (rc < 0) {
+-		otx2_err("Unable to set populate chunkpool.");
+-		goto free;
++		rc = rte_mempool_populate_default(tim_ring->chunk_pool);
++		if (rc < 0) {
++			otx2_err("Unable to set populate chunkpool.");
++			goto free;
++		}
++		tim_ring->aura = npa_lf_aura_handle_to_aura(
++				tim_ring->chunk_pool->pool_id);
++		tim_ring->ena_dfb = 0;
++	} else {
++		tim_ring->chunk_pool = rte_mempool_create(pool_name,
++				tim_ring->nb_chunks, tim_ring->chunk_sz,
++				cache_sz, 0, NULL, NULL, NULL, NULL,
++				rte_socket_id(),
++				mp_flags);
++		if (tim_ring->chunk_pool == NULL) {
++			otx2_err("Unable to create chunkpool.");
++			return -ENOMEM;
++		}
++		tim_ring->ena_dfb = 1;
+ 	}
+-	tim_ring->aura = npa_lf_aura_handle_to_aura(
+-						tim_ring->chunk_pool->pool_id);
+-	tim_ring->ena_dfb = 0;
+ 
+ 	return 0;
+ 
+@@ -229,6 +242,8 @@ otx2_tim_ring_create(struct rte_event_timer_adapter *adptr)
+ 	tim_ring->nb_bkts = (tim_ring->max_tout / tim_ring->tck_nsec);
+ 	tim_ring->chunk_sz = OTX2_TIM_RING_DEF_CHUNK_SZ;
+ 	nb_timers = rcfg->nb_timers;
++	tim_ring->disable_npa = dev->disable_npa;
++
+ 	tim_ring->nb_chunks = nb_timers / OTX2_TIM_NB_CHUNK_SLOTS(
+ 							tim_ring->chunk_sz);
+ 	tim_ring->nb_chunk_slots = OTX2_TIM_NB_CHUNK_SLOTS(tim_ring->chunk_sz);
+@@ -340,6 +355,24 @@ otx2_tim_caps_get(const struct rte_eventdev *evdev, uint64_t flags,
+ 	return 0;
+ }
+ 
++#define OTX2_TIM_DISABLE_NPA	"tim_disable_npa"
++
++static void
++tim_parse_devargs(struct rte_devargs *devargs, struct otx2_tim_evdev *dev)
++{
++	struct rte_kvargs *kvlist;
++
++	if (devargs == NULL)
++		return;
++
++	kvlist = rte_kvargs_parse(devargs->args, NULL);
++	if (kvlist == NULL)
++		return;
++
++	rte_kvargs_process(kvlist, OTX2_TIM_DISABLE_NPA,
++			   &parse_kvargs_flag, &dev->disable_npa);
++}
++
+ void
+ otx2_tim_init(struct rte_pci_device *pci_dev, struct otx2_dev *cmn_dev)
+ {
+@@ -365,6 +398,8 @@ otx2_tim_init(struct rte_pci_device *pci_dev, struct otx2_dev *cmn_dev)
+ 	dev->mbox = cmn_dev->mbox;
+ 	dev->bar2 = cmn_dev->bar2;
+ 
++	tim_parse_devargs(pci_dev->device.devargs, dev);
++
+ 	otx2_mbox_alloc_msg_free_rsrc_cnt(dev->mbox);
+ 	rc = otx2_mbox_process_msg(dev->mbox, (void *)&rsrc_cnt);
+ 	if (rc < 0) {
+diff --git a/drivers/event/octeontx2/otx2_tim_evdev.h b/drivers/event/octeontx2/otx2_tim_evdev.h
+index fdd076ebda6f..0a0a0b4d886e 100644
+--- a/drivers/event/octeontx2/otx2_tim_evdev.h
++++ b/drivers/event/octeontx2/otx2_tim_evdev.h
+@@ -55,6 +55,8 @@ struct otx2_tim_evdev {
+ 	struct otx2_mbox *mbox;
+ 	uint16_t nb_rings;
+ 	uintptr_t bar2;
++	/* Dev args */
++	uint8_t disable_npa;
+ };
+ 
+ struct otx2_tim_ring {
+@@ -65,6 +67,7 @@ struct otx2_tim_ring {
+ 	struct rte_mempool *chunk_pool;
+ 	uint64_t tck_int;
+ 	uint8_t prod_type_sp;
++	uint8_t disable_npa;
+ 	uint8_t optimized;
+ 	uint8_t ena_dfb;
+ 	uint16_t ring_id;
+-- 
+2.14.4
+

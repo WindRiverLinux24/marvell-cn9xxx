@@ -1,0 +1,354 @@
+From 5dbe117f1553ae8fd620e97cbea6d11e749d3966 Mon Sep 17 00:00:00 2001
+From: Kiran Kumar K <kirankumark@marvell.com>
+Date: Wed, 29 May 2019 11:59:17 +0530
+Subject: [PATCH 092/154] net/octeontx2: support register dump
+
+Add register dump support and mark Registers dump in features.
+
+Signed-off-by: Kiran Kumar K <kirankumark@marvell.com>
+Signed-off-by: Jerin Jacob <jerinj@marvell.com>
+---
+ doc/guides/nics/features/octeontx2.ini     |   1 +
+ doc/guides/nics/features/octeontx2_vec.ini |   1 +
+ doc/guides/nics/features/octeontx2_vf.ini  |   1 +
+ drivers/net/octeontx2/otx2_ethdev.c        |   1 +
+ drivers/net/octeontx2/otx2_ethdev.h        |   3 +
+ drivers/net/octeontx2/otx2_ethdev_debug.c  | 228 +++++++++++++++++++++++++++++
+ drivers/net/octeontx2/otx2_ethdev_irq.c    |   6 +
+ 7 files changed, 241 insertions(+)
+
+diff --git a/doc/guides/nics/features/octeontx2.ini b/doc/guides/nics/features/octeontx2.ini
+index 356b88de7f1c..7d53bf0e7de3 100644
+--- a/doc/guides/nics/features/octeontx2.ini
++++ b/doc/guides/nics/features/octeontx2.ini
+@@ -8,6 +8,7 @@ Speed capabilities   = Y
+ Lock-free Tx queue   = Y
+ SR-IOV               = Y
+ Multiprocess aware   = Y
++Registers dump       = Y
+ Linux VFIO           = Y
+ ARMv8                = Y
+ Usage doc            = Y
+diff --git a/doc/guides/nics/features/octeontx2_vec.ini b/doc/guides/nics/features/octeontx2_vec.ini
+index 5f4eaa3f44ef..e0cc7b22de8b 100644
+--- a/doc/guides/nics/features/octeontx2_vec.ini
++++ b/doc/guides/nics/features/octeontx2_vec.ini
+@@ -8,6 +8,7 @@ Speed capabilities   = Y
+ Lock-free Tx queue   = Y
+ SR-IOV               = Y
+ Multiprocess aware   = Y
++Registers dump       = Y
+ Linux VFIO           = Y
+ ARMv8                = Y
+ Usage doc            = Y
+diff --git a/doc/guides/nics/features/octeontx2_vf.ini b/doc/guides/nics/features/octeontx2_vf.ini
+index 024b032d4314..6dfdf88c6544 100644
+--- a/doc/guides/nics/features/octeontx2_vf.ini
++++ b/doc/guides/nics/features/octeontx2_vf.ini
+@@ -7,6 +7,7 @@
+ Speed capabilities   = Y
+ Lock-free Tx queue   = Y
+ Multiprocess aware   = Y
++Registers dump       = Y
+ Linux VFIO           = Y
+ ARMv8                = Y
+ Usage doc            = Y
+diff --git a/drivers/net/octeontx2/otx2_ethdev.c b/drivers/net/octeontx2/otx2_ethdev.c
+index 045855c2e8c8..48d5a15d6949 100644
+--- a/drivers/net/octeontx2/otx2_ethdev.c
++++ b/drivers/net/octeontx2/otx2_ethdev.c
+@@ -229,6 +229,7 @@ otx2_nix_configure(struct rte_eth_dev *eth_dev)
+ static const struct eth_dev_ops otx2_eth_dev_ops = {
+ 	.dev_infos_get            = otx2_nix_info_get,
+ 	.dev_configure            = otx2_nix_configure,
++	.get_reg                  = otx2_nix_dev_get_reg,
+ };
+ 
+ static inline int
+diff --git a/drivers/net/octeontx2/otx2_ethdev.h b/drivers/net/octeontx2/otx2_ethdev.h
+index 7c0bef28ee69..7313689b0ad5 100644
+--- a/drivers/net/octeontx2/otx2_ethdev.h
++++ b/drivers/net/octeontx2/otx2_ethdev.h
+@@ -175,6 +175,9 @@ void otx2_nix_unregister_irqs(struct rte_eth_dev *eth_dev);
+ void oxt2_nix_unregister_queue_irqs(struct rte_eth_dev *eth_dev);
+ 
+ /* Debug */
++int otx2_nix_reg_dump(struct otx2_eth_dev *dev, uint64_t *data);
++int otx2_nix_dev_get_reg(struct rte_eth_dev *eth_dev,
++			 struct rte_dev_reg_info *regs);
+ int otx2_nix_queues_ctx_dump(struct rte_eth_dev *eth_dev);
+ void otx2_nix_cqe_dump(const struct nix_cqe_hdr_s *cq);
+ 
+diff --git a/drivers/net/octeontx2/otx2_ethdev_debug.c b/drivers/net/octeontx2/otx2_ethdev_debug.c
+index 39cda7637ef4..9f06e55053bf 100644
+--- a/drivers/net/octeontx2/otx2_ethdev_debug.c
++++ b/drivers/net/octeontx2/otx2_ethdev_debug.c
+@@ -5,6 +5,234 @@
+ #include "otx2_ethdev.h"
+ 
+ #define nix_dump(fmt, ...) fprintf(stderr, fmt "\n", ##__VA_ARGS__)
++#define NIX_REG_INFO(reg) {reg, #reg}
++
++struct nix_lf_reg_info {
++	uint32_t offset;
++	const char *name;
++};
++
++static const struct
++nix_lf_reg_info nix_lf_reg[] = {
++	NIX_REG_INFO(NIX_LF_RX_SECRETX(0)),
++	NIX_REG_INFO(NIX_LF_RX_SECRETX(1)),
++	NIX_REG_INFO(NIX_LF_RX_SECRETX(2)),
++	NIX_REG_INFO(NIX_LF_RX_SECRETX(3)),
++	NIX_REG_INFO(NIX_LF_RX_SECRETX(4)),
++	NIX_REG_INFO(NIX_LF_RX_SECRETX(5)),
++	NIX_REG_INFO(NIX_LF_CFG),
++	NIX_REG_INFO(NIX_LF_GINT),
++	NIX_REG_INFO(NIX_LF_GINT_W1S),
++	NIX_REG_INFO(NIX_LF_GINT_ENA_W1C),
++	NIX_REG_INFO(NIX_LF_GINT_ENA_W1S),
++	NIX_REG_INFO(NIX_LF_ERR_INT),
++	NIX_REG_INFO(NIX_LF_ERR_INT_W1S),
++	NIX_REG_INFO(NIX_LF_ERR_INT_ENA_W1C),
++	NIX_REG_INFO(NIX_LF_ERR_INT_ENA_W1S),
++	NIX_REG_INFO(NIX_LF_RAS),
++	NIX_REG_INFO(NIX_LF_RAS_W1S),
++	NIX_REG_INFO(NIX_LF_RAS_ENA_W1C),
++	NIX_REG_INFO(NIX_LF_RAS_ENA_W1S),
++	NIX_REG_INFO(NIX_LF_SQ_OP_ERR_DBG),
++	NIX_REG_INFO(NIX_LF_MNQ_ERR_DBG),
++	NIX_REG_INFO(NIX_LF_SEND_ERR_DBG),
++};
++
++static int
++nix_lf_get_reg_count(struct otx2_eth_dev *dev)
++{
++	int reg_count = 0;
++
++	reg_count = RTE_DIM(nix_lf_reg);
++	/* NIX_LF_TX_STATX */
++	reg_count += dev->lf_tx_stats;
++	/* NIX_LF_RX_STATX */
++	reg_count += dev->lf_rx_stats;
++	/* NIX_LF_QINTX_CNT*/
++	reg_count += dev->qints;
++	/* NIX_LF_QINTX_INT */
++	reg_count += dev->qints;
++	/* NIX_LF_QINTX_ENA_W1S */
++	reg_count += dev->qints;
++	/* NIX_LF_QINTX_ENA_W1C */
++	reg_count += dev->qints;
++	/* NIX_LF_CINTX_CNT */
++	reg_count += dev->cints;
++	/* NIX_LF_CINTX_WAIT */
++	reg_count += dev->cints;
++	/* NIX_LF_CINTX_INT */
++	reg_count += dev->cints;
++	/* NIX_LF_CINTX_INT_W1S */
++	reg_count += dev->cints;
++	/* NIX_LF_CINTX_ENA_W1S */
++	reg_count += dev->cints;
++	/* NIX_LF_CINTX_ENA_W1C */
++	reg_count += dev->cints;
++
++	return reg_count;
++}
++
++int
++otx2_nix_reg_dump(struct otx2_eth_dev *dev, uint64_t *data)
++{
++	uintptr_t nix_lf_base = dev->base;
++	bool dump_stdout;
++	uint64_t reg;
++	uint32_t i;
++
++	dump_stdout = data ? 0 : 1;
++
++	for (i = 0; i < RTE_DIM(nix_lf_reg); i++) {
++		reg = otx2_read64(nix_lf_base + nix_lf_reg[i].offset);
++		if (dump_stdout && reg)
++			nix_dump("%32s = 0x%" PRIx64,
++				 nix_lf_reg[i].name, reg);
++		if (data)
++			*data++ = reg;
++	}
++
++	/* NIX_LF_TX_STATX */
++	for (i = 0; i < dev->lf_tx_stats; i++) {
++		reg = otx2_read64(nix_lf_base + NIX_LF_TX_STATX(i));
++		if (dump_stdout && reg)
++			nix_dump("%32s_%d = 0x%" PRIx64,
++				 "NIX_LF_TX_STATX", i, reg);
++		if (data)
++			*data++ = reg;
++	}
++
++	/* NIX_LF_RX_STATX */
++	for (i = 0; i < dev->lf_rx_stats; i++) {
++		reg = otx2_read64(nix_lf_base + NIX_LF_RX_STATX(i));
++		if (dump_stdout && reg)
++			nix_dump("%32s_%d = 0x%" PRIx64,
++				 "NIX_LF_RX_STATX", i, reg);
++		if (data)
++			*data++ = reg;
++	}
++
++	/* NIX_LF_QINTX_CNT*/
++	for (i = 0; i < dev->qints; i++) {
++		reg = otx2_read64(nix_lf_base + NIX_LF_QINTX_CNT(i));
++		if (dump_stdout && reg)
++			nix_dump("%32s_%d = 0x%" PRIx64,
++				 "NIX_LF_QINTX_CNT", i, reg);
++		if (data)
++			*data++ = reg;
++	}
++
++	/* NIX_LF_QINTX_INT */
++	for (i = 0; i < dev->qints; i++) {
++		reg = otx2_read64(nix_lf_base + NIX_LF_QINTX_INT(i));
++		if (dump_stdout && reg)
++			nix_dump("%32s_%d = 0x%" PRIx64,
++				 "NIX_LF_QINTX_INT", i, reg);
++		if (data)
++			*data++ = reg;
++	}
++
++	/* NIX_LF_QINTX_ENA_W1S */
++	for (i = 0; i < dev->qints; i++) {
++		reg = otx2_read64(nix_lf_base + NIX_LF_QINTX_ENA_W1S(i));
++		if (dump_stdout && reg)
++			nix_dump("%32s_%d = 0x%" PRIx64,
++				 "NIX_LF_QINTX_ENA_W1S", i, reg);
++		if (data)
++			*data++ = reg;
++	}
++
++	/* NIX_LF_QINTX_ENA_W1C */
++	for (i = 0; i < dev->qints; i++) {
++		reg = otx2_read64(nix_lf_base + NIX_LF_QINTX_ENA_W1C(i));
++		if (dump_stdout && reg)
++			nix_dump("%32s_%d = 0x%" PRIx64,
++				 "NIX_LF_QINTX_ENA_W1C", i, reg);
++		if (data)
++			*data++ = reg;
++	}
++
++	/* NIX_LF_CINTX_CNT */
++	for (i = 0; i < dev->cints; i++) {
++		reg = otx2_read64(nix_lf_base + NIX_LF_CINTX_CNT(i));
++		if (dump_stdout && reg)
++			nix_dump("%32s_%d = 0x%" PRIx64,
++				 "NIX_LF_CINTX_CNT", i, reg);
++		if (data)
++			*data++ = reg;
++	}
++
++	/* NIX_LF_CINTX_WAIT */
++	for (i = 0; i < dev->cints; i++) {
++		reg = otx2_read64(nix_lf_base + NIX_LF_CINTX_WAIT(i));
++		if (dump_stdout && reg)
++			nix_dump("%32s_%d = 0x%" PRIx64,
++				 "NIX_LF_CINTX_WAIT", i, reg);
++		if (data)
++			*data++ = reg;
++	}
++
++	/* NIX_LF_CINTX_INT */
++	for (i = 0; i < dev->cints; i++) {
++		reg = otx2_read64(nix_lf_base + NIX_LF_CINTX_INT(i));
++		if (dump_stdout && reg)
++			nix_dump("%32s_%d = 0x%" PRIx64,
++				 "NIX_LF_CINTX_INT", i, reg);
++		if (data)
++			*data++ = reg;
++	}
++
++	/* NIX_LF_CINTX_INT_W1S */
++	for (i = 0; i < dev->cints; i++) {
++		reg = otx2_read64(nix_lf_base + NIX_LF_CINTX_INT_W1S(i));
++		if (dump_stdout && reg)
++			nix_dump("%32s_%d = 0x%" PRIx64,
++				 "NIX_LF_CINTX_INT_W1S", i, reg);
++		if (data)
++			*data++ = reg;
++	}
++
++	/* NIX_LF_CINTX_ENA_W1S */
++	for (i = 0; i < dev->cints; i++) {
++		reg = otx2_read64(nix_lf_base + NIX_LF_CINTX_ENA_W1S(i));
++		if (dump_stdout && reg)
++			nix_dump("%32s_%d = 0x%" PRIx64,
++				 "NIX_LF_CINTX_ENA_W1S", i, reg);
++		if (data)
++			*data++ = reg;
++	}
++
++	/* NIX_LF_CINTX_ENA_W1C */
++	for (i = 0; i < dev->cints; i++) {
++		reg = otx2_read64(nix_lf_base + NIX_LF_CINTX_ENA_W1C(i));
++		if (dump_stdout && reg)
++			nix_dump("%32s_%d = 0x%" PRIx64,
++				 "NIX_LF_CINTX_ENA_W1C", i, reg);
++		if (data)
++			*data++ = reg;
++	}
++	return 0;
++}
++
++int
++otx2_nix_dev_get_reg(struct rte_eth_dev *eth_dev, struct rte_dev_reg_info *regs)
++{
++	struct otx2_eth_dev *dev = otx2_eth_pmd_priv(eth_dev);
++	uint64_t *data = regs->data;
++
++	if (data == NULL) {
++		regs->length = nix_lf_get_reg_count(dev);
++		regs->width = 8;
++		return 0;
++	}
++
++	if (!regs->length ||
++	    regs->length == (uint32_t)nix_lf_get_reg_count(dev)) {
++		otx2_nix_reg_dump(dev, data);
++		return 0;
++	}
++
++	return -ENOTSUP;
++}
+ 
+ static inline void
+ nix_lf_sq_dump(struct  nix_sq_ctx_s *ctx)
+diff --git a/drivers/net/octeontx2/otx2_ethdev_irq.c b/drivers/net/octeontx2/otx2_ethdev_irq.c
+index fdebdef38b97..066aca7a5a48 100644
+--- a/drivers/net/octeontx2/otx2_ethdev_irq.c
++++ b/drivers/net/octeontx2/otx2_ethdev_irq.c
+@@ -24,6 +24,8 @@ nix_lf_err_irq(void *param)
+ 	/* Clear interrupt */
+ 	otx2_write64(intr, dev->base + NIX_LF_ERR_INT);
+ 
++	/* Dump registers to std out */
++	otx2_nix_reg_dump(dev, NULL);
+ 	otx2_nix_queues_ctx_dump(eth_dev);
+ }
+ 
+@@ -78,6 +80,8 @@ nix_lf_ras_irq(void *param)
+ 	/* Clear interrupt */
+ 	otx2_write64(intr, dev->base + NIX_LF_RAS);
+ 
++	/* Dump registers to std out */
++	otx2_nix_reg_dump(dev, NULL);
+ 	otx2_nix_queues_ctx_dump(eth_dev);
+ }
+ 
+@@ -237,6 +241,8 @@ nix_lf_q_irq(void *param)
+ 	/* Clear interrupt */
+ 	otx2_write64(intr, dev->base + NIX_LF_QINTX_INT(qintx));
+ 
++	/* Dump registers to std out */
++	otx2_nix_reg_dump(dev, NULL);
+ 	otx2_nix_queues_ctx_dump(eth_dev);
+ }
+ 
+-- 
+2.14.4
+

@@ -1,0 +1,183 @@
+From 52260180aab1538280cbacc1486b2419cc2c45b5 Mon Sep 17 00:00:00 2001
+From: Jerin Jacob <jerinj@marvell.com>
+Date: Sat, 22 Jun 2019 18:54:13 +0530
+Subject: [PATCH 024/154] mempool/octeontx2: add remaining slow path ops
+
+Add remaining get_count(), calc_mem_size() and populate() slow path
+mempool operations.
+
+Signed-off-by: Jerin Jacob <jerinj@marvell.com>
+Signed-off-by: Vamsi Attunuru <vattunuru@marvell.com>
+---
+ drivers/mempool/octeontx2/otx2_mempool.c     | 17 ++++++++
+ drivers/mempool/octeontx2/otx2_mempool.h     | 15 ++++++-
+ drivers/mempool/octeontx2/otx2_mempool_ops.c | 62 ++++++++++++++++++++++++++++
+ 3 files changed, 92 insertions(+), 2 deletions(-)
+
+diff --git a/drivers/mempool/octeontx2/otx2_mempool.c b/drivers/mempool/octeontx2/otx2_mempool.c
+index 1bcb86cf47dc..c47f95fb0309 100644
+--- a/drivers/mempool/octeontx2/otx2_mempool.c
++++ b/drivers/mempool/octeontx2/otx2_mempool.c
+@@ -105,8 +105,24 @@ npa_lf_init(struct otx2_npa_lf *lf, uintptr_t base, uint8_t aura_sz,
+ 		goto bmap_free;
+ 	}
+ 
++	/* Allocate memory for nap_aura_lim memory */
++	lf->aura_lim = rte_zmalloc("npa_aura_lim_mem",
++			sizeof(struct npa_aura_lim) * nr_pools, 0);
++	if (lf->aura_lim == NULL) {
++		rc = -ENOMEM;
++		goto qint_free;
++	}
++
++	/* Init aura start & end limits */
++	for (i = 0; i < nr_pools; i++) {
++		lf->aura_lim[i].ptr_start = UINT64_MAX;
++		lf->aura_lim[i].ptr_end = 0x0ull;
++	}
++
+ 	return 0;
+ 
++qint_free:
++	rte_free(lf->npa_qint_mem);
+ bmap_free:
+ 	rte_bitmap_free(lf->npa_bmp);
+ bmap_mem_free:
+@@ -123,6 +139,7 @@ npa_lf_fini(struct otx2_npa_lf *lf)
+ 	if (!lf)
+ 		return NPA_LF_ERR_PARAM;
+ 
++	rte_free(lf->aura_lim);
+ 	rte_free(lf->npa_qint_mem);
+ 	rte_bitmap_free(lf->npa_bmp);
+ 	rte_free(lf->npa_bmp_mem);
+diff --git a/drivers/mempool/octeontx2/otx2_mempool.h b/drivers/mempool/octeontx2/otx2_mempool.h
+index efaa308b3357..adcc0db24538 100644
+--- a/drivers/mempool/octeontx2/otx2_mempool.h
++++ b/drivers/mempool/octeontx2/otx2_mempool.h
+@@ -29,6 +29,11 @@ struct otx2_npa_qint {
+ 	uint8_t qintx;
+ };
+ 
++struct npa_aura_lim {
++	uint64_t ptr_start;
++	uint64_t ptr_end;
++};
++
+ struct otx2_npa_lf {
+ 	uint16_t qints;
+ 	uintptr_t base;
+@@ -42,6 +47,7 @@ struct otx2_npa_lf {
+ 	uint32_t stack_pg_ptrs;
+ 	uint32_t stack_pg_bytes;
+ 	struct rte_bitmap *npa_bmp;
++	struct npa_aura_lim *aura_lim;
+ 	struct rte_pci_device *pci_dev;
+ 	struct rte_intr_handle *intr_handle;
+ };
+@@ -185,11 +191,16 @@ npa_lf_aura_op_range_set(uint64_t aura_handle, uint64_t start_iova,
+ 				uint64_t end_iova)
+ {
+ 	uint64_t reg = npa_lf_aura_handle_to_aura(aura_handle);
++	struct otx2_npa_lf *lf = otx2_npa_lf_obj_get();
++	struct npa_aura_lim *lim = lf->aura_lim;
++
++	lim[reg].ptr_start = RTE_MIN(lim[reg].ptr_start, start_iova);
++	lim[reg].ptr_end = RTE_MAX(lim[reg].ptr_end, end_iova);
+ 
+-	otx2_store_pair(start_iova, reg,
++	otx2_store_pair(lim[reg].ptr_start, reg,
+ 			npa_lf_aura_handle_to_base(aura_handle) +
+ 			NPA_LF_POOL_OP_PTR_START0);
+-	otx2_store_pair(end_iova, reg,
++	otx2_store_pair(lim[reg].ptr_end, reg,
+ 			npa_lf_aura_handle_to_base(aura_handle) +
+ 			NPA_LF_POOL_OP_PTR_END0);
+ }
+diff --git a/drivers/mempool/octeontx2/otx2_mempool_ops.c b/drivers/mempool/octeontx2/otx2_mempool_ops.c
+index 94570319aad2..966b7d7f1179 100644
+--- a/drivers/mempool/octeontx2/otx2_mempool_ops.c
++++ b/drivers/mempool/octeontx2/otx2_mempool_ops.c
+@@ -7,6 +7,12 @@
+ 
+ #include "otx2_mempool.h"
+ 
++static unsigned int
++otx2_npa_get_count(const struct rte_mempool *mp)
++{
++	return (unsigned int)npa_lf_aura_op_available(mp->pool_id);
++}
++
+ static int
+ npa_lf_aura_pool_init(struct otx2_mbox *mbox, uint32_t aura_id,
+ 		      struct npa_aura_s *aura, struct npa_pool_s *pool)
+@@ -341,10 +347,66 @@ otx2_npa_free(struct rte_mempool *mp)
+ 	otx2_npa_lf_fini();
+ }
+ 
++static ssize_t
++otx2_npa_calc_mem_size(const struct rte_mempool *mp, uint32_t obj_num,
++		       uint32_t pg_shift, size_t *min_chunk_size, size_t *align)
++{
++	ssize_t mem_size;
++
++	/*
++	 * Simply need space for one more object to be able to
++	 * fulfill alignment requirements.
++	 */
++	mem_size = rte_mempool_op_calc_mem_size_default(mp, obj_num + 1,
++							pg_shift,
++							min_chunk_size, align);
++	if (mem_size >= 0) {
++		/*
++		 * Memory area which contains objects must be physically
++		 * contiguous.
++		 */
++		*min_chunk_size = mem_size;
++	}
++
++	return mem_size;
++}
++
++static int
++otx2_npa_populate(struct rte_mempool *mp, unsigned int max_objs, void *vaddr,
++		  rte_iova_t iova, size_t len,
++		  rte_mempool_populate_obj_cb_t *obj_cb, void *obj_cb_arg)
++{
++	size_t total_elt_sz;
++	size_t off;
++
++	if (iova == RTE_BAD_IOVA)
++		return -EINVAL;
++
++	total_elt_sz = mp->header_size + mp->elt_size + mp->trailer_size;
++
++	/* Align object start address to a multiple of total_elt_sz */
++	off = total_elt_sz - ((uintptr_t)vaddr % total_elt_sz);
++
++	if (len < off)
++		return -EINVAL;
++
++	vaddr = (char *)vaddr + off;
++	iova += off;
++	len -= off;
++
++	npa_lf_aura_op_range_set(mp->pool_id, iova, iova + len);
++
++	return rte_mempool_op_populate_default(mp, max_objs, vaddr, iova, len,
++					       obj_cb, obj_cb_arg);
++}
++
+ static struct rte_mempool_ops otx2_npa_ops = {
+ 	.name = "octeontx2_npa",
+ 	.alloc = otx2_npa_alloc,
+ 	.free = otx2_npa_free,
++	.get_count = otx2_npa_get_count,
++	.calc_mem_size = otx2_npa_calc_mem_size,
++	.populate = otx2_npa_populate,
+ };
+ 
+ MEMPOOL_REGISTER_OPS(otx2_npa_ops);
+-- 
+2.14.4
+

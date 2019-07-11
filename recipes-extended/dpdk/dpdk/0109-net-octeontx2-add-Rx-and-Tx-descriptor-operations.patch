@@ -1,0 +1,204 @@
+From f5db9450828428eebc85888d0b42a7c7528b089c Mon Sep 17 00:00:00 2001
+From: Jerin Jacob <jerinj@marvell.com>
+Date: Fri, 31 May 2019 12:11:22 +0530
+Subject: [PATCH 109/154] net/octeontx2: add Rx and Tx descriptor operations
+
+Add Rx and Tx queue descriptor related operations.
+
+Signed-off-by: Jerin Jacob <jerinj@marvell.com>
+Signed-off-by: Kiran Kumar K <kirankumark@marvell.com>
+---
+ doc/guides/nics/features/octeontx2.ini     |  2 +
+ doc/guides/nics/features/octeontx2_vec.ini |  2 +
+ doc/guides/nics/features/octeontx2_vf.ini  |  2 +
+ drivers/net/octeontx2/otx2_ethdev.c        |  4 ++
+ drivers/net/octeontx2/otx2_ethdev.h        |  4 ++
+ drivers/net/octeontx2/otx2_ethdev_ops.c    | 83 ++++++++++++++++++++++++++++++
+ 6 files changed, 97 insertions(+)
+
+diff --git a/doc/guides/nics/features/octeontx2.ini b/doc/guides/nics/features/octeontx2.ini
+index 0de07776f386..f07b64f24e37 100644
+--- a/doc/guides/nics/features/octeontx2.ini
++++ b/doc/guides/nics/features/octeontx2.ini
+@@ -12,6 +12,7 @@ Link status          = Y
+ Link status event    = Y
+ Runtime Rx queue setup = Y
+ Runtime Tx queue setup = Y
++Free Tx mbuf on demand = Y
+ Queue start/stop     = Y
+ Promiscuous mode     = Y
+ Allmulticast mode    = Y
+@@ -21,6 +22,7 @@ RSS key update       = Y
+ RSS reta update      = Y
+ Inner RSS            = Y
+ Packet type parsing  = Y
++Rx descriptor status = Y
+ Basic stats          = Y
+ Stats per queue      = Y
+ Extended stats       = Y
+diff --git a/doc/guides/nics/features/octeontx2_vec.ini b/doc/guides/nics/features/octeontx2_vec.ini
+index b4b253aa4ac7..911c926e4e0d 100644
+--- a/doc/guides/nics/features/octeontx2_vec.ini
++++ b/doc/guides/nics/features/octeontx2_vec.ini
+@@ -12,6 +12,7 @@ Link status          = Y
+ Link status event    = Y
+ Runtime Rx queue setup = Y
+ Runtime Tx queue setup = Y
++Free Tx mbuf on demand = Y
+ Queue start/stop     = Y
+ Promiscuous mode     = Y
+ Allmulticast mode    = Y
+@@ -21,6 +22,7 @@ RSS key update       = Y
+ RSS reta update      = Y
+ Inner RSS            = Y
+ Packet type parsing  = Y
++Rx descriptor status = Y
+ Basic stats          = Y
+ Extended stats       = Y
+ Stats per queue      = Y
+diff --git a/doc/guides/nics/features/octeontx2_vf.ini b/doc/guides/nics/features/octeontx2_vf.ini
+index 21cc4861e337..e275e6469b62 100644
+--- a/doc/guides/nics/features/octeontx2_vf.ini
++++ b/doc/guides/nics/features/octeontx2_vf.ini
+@@ -11,12 +11,14 @@ Link status          = Y
+ Link status event    = Y
+ Runtime Rx queue setup = Y
+ Runtime Tx queue setup = Y
++Free Tx mbuf on demand = Y
+ Queue start/stop     = Y
+ RSS hash             = Y
+ RSS key update       = Y
+ RSS reta update      = Y
+ Inner RSS            = Y
+ Packet type parsing  = Y
++Rx descriptor status = Y
+ Basic stats          = Y
+ Extended stats       = Y
+ Stats per queue      = Y
+diff --git a/drivers/net/octeontx2/otx2_ethdev.c b/drivers/net/octeontx2/otx2_ethdev.c
+index 7ef2cb87cfbd..909aad65c1eb 100644
+--- a/drivers/net/octeontx2/otx2_ethdev.c
++++ b/drivers/net/octeontx2/otx2_ethdev.c
+@@ -1314,6 +1314,10 @@ static const struct eth_dev_ops otx2_eth_dev_ops = {
+ 	.xstats_get_names_by_id   = otx2_nix_xstats_get_names_by_id,
+ 	.rxq_info_get             = otx2_nix_rxq_info_get,
+ 	.txq_info_get             = otx2_nix_txq_info_get,
++	.rx_queue_count           = otx2_nix_rx_queue_count,
++	.rx_descriptor_done       = otx2_nix_rx_descriptor_done,
++	.rx_descriptor_status     = otx2_nix_rx_descriptor_status,
++	.tx_done_cleanup          = otx2_nix_tx_done_cleanup,
+ 	.pool_ops_supported       = otx2_nix_pool_ops_supported,
+ };
+ 
+diff --git a/drivers/net/octeontx2/otx2_ethdev.h b/drivers/net/octeontx2/otx2_ethdev.h
+index 199d5f242a2e..8f2691c80969 100644
+--- a/drivers/net/octeontx2/otx2_ethdev.h
++++ b/drivers/net/octeontx2/otx2_ethdev.h
+@@ -279,6 +279,10 @@ void otx2_nix_rxq_info_get(struct rte_eth_dev *eth_dev, uint16_t queue_id,
+ 			   struct rte_eth_rxq_info *qinfo);
+ void otx2_nix_txq_info_get(struct rte_eth_dev *eth_dev, uint16_t queue_id,
+ 			   struct rte_eth_txq_info *qinfo);
++uint32_t otx2_nix_rx_queue_count(struct rte_eth_dev *eth_dev, uint16_t qidx);
++int otx2_nix_tx_done_cleanup(void *txq, uint32_t free_cnt);
++int otx2_nix_rx_descriptor_done(void *rxq, uint16_t offset);
++int otx2_nix_rx_descriptor_status(void *rx_queue, uint16_t offset);
+ 
+ void otx2_nix_promisc_config(struct rte_eth_dev *eth_dev, int en);
+ void otx2_nix_promisc_enable(struct rte_eth_dev *eth_dev);
+diff --git a/drivers/net/octeontx2/otx2_ethdev_ops.c b/drivers/net/octeontx2/otx2_ethdev_ops.c
+index eda5f8a0189f..44cc17200916 100644
+--- a/drivers/net/octeontx2/otx2_ethdev_ops.c
++++ b/drivers/net/octeontx2/otx2_ethdev_ops.c
+@@ -126,6 +126,89 @@ otx2_nix_txq_info_get(struct rte_eth_dev *eth_dev, uint16_t queue_id,
+ 	qinfo->conf.tx_deferred_start = 0;
+ }
+ 
++static void
++nix_rx_head_tail_get(struct otx2_eth_dev *dev,
++		     uint32_t *head, uint32_t *tail, uint16_t queue_idx)
++{
++	uint64_t reg, val;
++
++	if (head == NULL || tail == NULL)
++		return;
++
++	reg = (((uint64_t)queue_idx) << 32);
++	val = otx2_atomic64_add_nosync(reg, (int64_t *)
++				       (dev->base + NIX_LF_CQ_OP_STATUS));
++	if (val & (OP_ERR | CQ_ERR))
++		val = 0;
++
++	*tail = (uint32_t)(val & 0xFFFFF);
++	*head = (uint32_t)((val >> 20) & 0xFFFFF);
++}
++
++uint32_t
++otx2_nix_rx_queue_count(struct rte_eth_dev *eth_dev, uint16_t queue_idx)
++{
++	struct otx2_eth_rxq *rxq = eth_dev->data->rx_queues[queue_idx];
++	struct otx2_eth_dev *dev = otx2_eth_pmd_priv(eth_dev);
++	uint32_t head, tail;
++
++	nix_rx_head_tail_get(dev, &head, &tail, queue_idx);
++	return (tail - head) % rxq->qlen;
++}
++
++static inline int
++nix_offset_has_packet(uint32_t head, uint32_t tail, uint16_t offset)
++{
++	/* Check given offset(queue index) has packet filled by HW */
++	if (tail > head && offset <= tail && offset >= head)
++		return 1;
++	/* Wrap around case */
++	if (head > tail && (offset >= head || offset <= tail))
++		return 1;
++
++	return 0;
++}
++
++int
++otx2_nix_rx_descriptor_done(void *rx_queue, uint16_t offset)
++{
++	struct otx2_eth_rxq *rxq = rx_queue;
++	uint32_t head, tail;
++
++	nix_rx_head_tail_get(otx2_eth_pmd_priv(rxq->eth_dev),
++			     &head, &tail, rxq->rq);
++
++	return nix_offset_has_packet(head, tail, offset);
++}
++
++int
++otx2_nix_rx_descriptor_status(void *rx_queue, uint16_t offset)
++{
++	struct otx2_eth_rxq *rxq = rx_queue;
++	uint32_t head, tail;
++
++	if (rxq->qlen >= offset)
++		return -EINVAL;
++
++	nix_rx_head_tail_get(otx2_eth_pmd_priv(rxq->eth_dev),
++			     &head, &tail, rxq->rq);
++
++	if (nix_offset_has_packet(head, tail, offset))
++		return RTE_ETH_RX_DESC_DONE;
++	else
++		return RTE_ETH_RX_DESC_AVAIL;
++}
++
++/* It is a NOP for octeontx2 as HW frees the buffer on xmit */
++int
++otx2_nix_tx_done_cleanup(void *txq, uint32_t free_cnt)
++{
++	RTE_SET_USED(txq);
++	RTE_SET_USED(free_cnt);
++
++	return 0;
++}
++
+ int
+ otx2_nix_pool_ops_supported(struct rte_eth_dev *eth_dev, const char *pool)
+ {
+-- 
+2.14.4
+

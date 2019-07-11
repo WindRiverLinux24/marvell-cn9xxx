@@ -1,0 +1,1214 @@
+From dab9462e04788d6803d774746085a4b57c9a39ec Mon Sep 17 00:00:00 2001
+From: Pavan Nikhilesh <pbhagavatula@marvell.com>
+Date: Thu, 4 Jul 2019 07:49:37 +0530
+Subject: [PATCH 145/154] event/octeontx2: add Rx adapter fastpath ops
+
+Add support for event eth Rx adapter fastpath operations.
+
+Signed-off-by: Jerin Jacob <jerinj@marvell.com>
+Signed-off-by: Pavan Nikhilesh <pbhagavatula@marvell.com>
+Signed-off-by: Nithin Dabilpuram <ndabilpuram@marvell.com>
+---
+ drivers/event/octeontx2/otx2_evdev.c       | 308 +++++++++++++++++++++++++++--
+ drivers/event/octeontx2/otx2_evdev.h       | 108 ++++++++--
+ drivers/event/octeontx2/otx2_evdev_adptr.c |  45 +++++
+ drivers/event/octeontx2/otx2_worker.c      | 178 ++++++++++++-----
+ drivers/event/octeontx2/otx2_worker.h      |  43 +++-
+ drivers/event/octeontx2/otx2_worker_dual.c | 220 +++++++++++++++------
+ drivers/event/octeontx2/otx2_worker_dual.h |  22 ++-
+ 7 files changed, 767 insertions(+), 157 deletions(-)
+
+diff --git a/drivers/event/octeontx2/otx2_evdev.c b/drivers/event/octeontx2/otx2_evdev.c
+index 2956a572d15a..f45fc008d4a0 100644
+--- a/drivers/event/octeontx2/otx2_evdev.c
++++ b/drivers/event/octeontx2/otx2_evdev.c
+@@ -43,17 +43,199 @@ void
+ sso_fastpath_fns_set(struct rte_eventdev *event_dev)
+ {
+ 	struct otx2_sso_evdev *dev = sso_pmd_priv(event_dev);
++	/* Single WS modes */
++	const event_dequeue_t ssogws_deq[2][2][2][2][2][2] = {
++#define R(name, f5, f4, f3, f2, f1, f0, flags)				\
++		[f5][f4][f3][f2][f1][f0] = otx2_ssogws_deq_ ##name,
++SSO_RX_ADPTR_ENQ_FASTPATH_FUNC
++#undef R
++	};
++
++	const event_dequeue_burst_t ssogws_deq_burst[2][2][2][2][2][2] = {
++#define R(name, f5, f4, f3, f2, f1, f0, flags)				\
++		[f5][f4][f3][f2][f1][f0] = otx2_ssogws_deq_burst_ ##name,
++SSO_RX_ADPTR_ENQ_FASTPATH_FUNC
++#undef R
++	};
++
++	const event_dequeue_t ssogws_deq_timeout[2][2][2][2][2][2] = {
++#define R(name, f5, f4, f3, f2, f1, f0, flags)				\
++		[f5][f4][f3][f2][f1][f0] = otx2_ssogws_deq_timeout_ ##name,
++SSO_RX_ADPTR_ENQ_FASTPATH_FUNC
++#undef R
++	};
++
++	const event_dequeue_burst_t
++		ssogws_deq_timeout_burst[2][2][2][2][2][2] = {
++#define R(name, f5, f4, f3, f2, f1, f0, flags)				\
++		[f5][f4][f3][f2][f1][f0] =				\
++			otx2_ssogws_deq_timeout_burst_ ##name,
++SSO_RX_ADPTR_ENQ_FASTPATH_FUNC
++#undef R
++	};
++
++	const event_dequeue_t ssogws_deq_seg[2][2][2][2][2][2] = {
++#define R(name, f5, f4, f3, f2, f1, f0, flags)				\
++		[f5][f4][f3][f2][f1][f0] = otx2_ssogws_deq_seg_ ##name,
++SSO_RX_ADPTR_ENQ_FASTPATH_FUNC
++#undef R
++	};
++
++	const event_dequeue_burst_t ssogws_deq_seg_burst[2][2][2][2][2][2] = {
++#define R(name, f5, f4, f3, f2, f1, f0, flags)				\
++		[f5][f4][f3][f2][f1][f0] = otx2_ssogws_deq_seg_burst_ ##name,
++SSO_RX_ADPTR_ENQ_FASTPATH_FUNC
++#undef R
++	};
++
++	const event_dequeue_t ssogws_deq_seg_timeout[2][2][2][2][2][2] = {
++#define R(name, f5, f4, f3, f2, f1, f0, flags)				\
++		[f5][f4][f3][f2][f1][f0] = otx2_ssogws_deq_seg_timeout_ ##name,
++SSO_RX_ADPTR_ENQ_FASTPATH_FUNC
++#undef R
++	};
++
++	const event_dequeue_burst_t
++		ssogws_deq_seg_timeout_burst[2][2][2][2][2][2] = {
++#define R(name, f5, f4, f3, f2, f1, f0, flags)				\
++		[f5][f4][f3][f2][f1][f0] =				\
++				otx2_ssogws_deq_seg_timeout_burst_ ##name,
++SSO_RX_ADPTR_ENQ_FASTPATH_FUNC
++#undef R
++	};
++
++
++	/* Dual WS modes */
++	const event_dequeue_t ssogws_dual_deq[2][2][2][2][2][2] = {
++#define R(name, f5, f4, f3, f2, f1, f0, flags)				\
++		[f5][f4][f3][f2][f1][f0] = otx2_ssogws_dual_deq_ ##name,
++SSO_RX_ADPTR_ENQ_FASTPATH_FUNC
++#undef R
++	};
++
++	const event_dequeue_burst_t ssogws_dual_deq_burst[2][2][2][2][2][2] = {
++#define R(name, f5, f4, f3, f2, f1, f0, flags)				\
++		[f5][f4][f3][f2][f1][f0] = otx2_ssogws_dual_deq_burst_ ##name,
++SSO_RX_ADPTR_ENQ_FASTPATH_FUNC
++#undef R
++	};
++
++	const event_dequeue_t ssogws_dual_deq_timeout[2][2][2][2][2][2] = {
++#define R(name, f5, f4, f3, f2, f1, f0, flags)				\
++		[f5][f4][f3][f2][f1][f0] = otx2_ssogws_dual_deq_timeout_ ##name,
++SSO_RX_ADPTR_ENQ_FASTPATH_FUNC
++#undef R
++	};
++
++	const event_dequeue_burst_t
++		ssogws_dual_deq_timeout_burst[2][2][2][2][2][2] = {
++#define R(name, f5, f4, f3, f2, f1, f0, flags)				\
++	[f5][f4][f3][f2][f1][f0] = otx2_ssogws_dual_deq_timeout_burst_ ##name,
++SSO_RX_ADPTR_ENQ_FASTPATH_FUNC
++#undef R
++	};
++
++	const event_dequeue_t ssogws_dual_deq_seg[2][2][2][2][2][2] = {
++#define R(name, f5, f4, f3, f2, f1, f0, flags)				\
++		[f5][f4][f3][f2][f1][f0] = otx2_ssogws_dual_deq_seg_ ##name,
++SSO_RX_ADPTR_ENQ_FASTPATH_FUNC
++#undef R
++	};
++
++	const event_dequeue_burst_t
++		ssogws_dual_deq_seg_burst[2][2][2][2][2][2] = {
++#define R(name, f5, f4, f3, f2, f1, f0, flags)				\
++		[f5][f4][f3][f2][f1][f0] =				\
++				otx2_ssogws_dual_deq_seg_burst_ ##name,
++SSO_RX_ADPTR_ENQ_FASTPATH_FUNC
++#undef R
++	};
++
++	const event_dequeue_t ssogws_dual_deq_seg_timeout[2][2][2][2][2][2] = {
++#define R(name, f5, f4, f3, f2, f1, f0, flags)				\
++		[f5][f4][f3][f2][f1][f0] =				\
++				otx2_ssogws_dual_deq_seg_timeout_ ##name,
++SSO_RX_ADPTR_ENQ_FASTPATH_FUNC
++#undef R
++	};
++
++	const event_dequeue_burst_t
++		ssogws_dual_deq_seg_timeout_burst[2][2][2][2][2][2] = {
++#define R(name, f5, f4, f3, f2, f1, f0, flags)				\
++	[f5][f4][f3][f2][f1][f0] =					\
++		otx2_ssogws_dual_deq_seg_timeout_burst_ ##name,
++SSO_RX_ADPTR_ENQ_FASTPATH_FUNC
++#undef R
++	};
+ 
+ 	event_dev->enqueue			= otx2_ssogws_enq;
+ 	event_dev->enqueue_burst		= otx2_ssogws_enq_burst;
+ 	event_dev->enqueue_new_burst		= otx2_ssogws_enq_new_burst;
+ 	event_dev->enqueue_forward_burst	= otx2_ssogws_enq_fwd_burst;
+-
+-	event_dev->dequeue			= otx2_ssogws_deq;
+-	event_dev->dequeue_burst		= otx2_ssogws_deq_burst;
+-	if (dev->is_timeout_deq) {
+-		event_dev->dequeue		= otx2_ssogws_deq_timeout;
+-		event_dev->dequeue_burst	= otx2_ssogws_deq_timeout_burst;
++	if (dev->rx_offloads & NIX_RX_MULTI_SEG_F) {
++		event_dev->dequeue		= ssogws_deq_seg
++			[!!(dev->rx_offloads & NIX_RX_OFFLOAD_TSTAMP_F)]
++			[!!(dev->rx_offloads & NIX_RX_OFFLOAD_MARK_UPDATE_F)]
++			[!!(dev->rx_offloads & NIX_RX_OFFLOAD_VLAN_STRIP_F)]
++			[!!(dev->rx_offloads & NIX_RX_OFFLOAD_CHECKSUM_F)]
++			[!!(dev->rx_offloads & NIX_RX_OFFLOAD_PTYPE_F)]
++			[!!(dev->rx_offloads & NIX_RX_OFFLOAD_RSS_F)];
++		event_dev->dequeue_burst	= ssogws_deq_seg_burst
++			[!!(dev->rx_offloads & NIX_RX_OFFLOAD_TSTAMP_F)]
++			[!!(dev->rx_offloads & NIX_RX_OFFLOAD_MARK_UPDATE_F)]
++			[!!(dev->rx_offloads & NIX_RX_OFFLOAD_VLAN_STRIP_F)]
++			[!!(dev->rx_offloads & NIX_RX_OFFLOAD_CHECKSUM_F)]
++			[!!(dev->rx_offloads & NIX_RX_OFFLOAD_PTYPE_F)]
++			[!!(dev->rx_offloads & NIX_RX_OFFLOAD_RSS_F)];
++		if (dev->is_timeout_deq) {
++			event_dev->dequeue	= ssogws_deq_seg_timeout
++			[!!(dev->rx_offloads & NIX_RX_OFFLOAD_TSTAMP_F)]
++			[!!(dev->rx_offloads & NIX_RX_OFFLOAD_MARK_UPDATE_F)]
++			[!!(dev->rx_offloads & NIX_RX_OFFLOAD_VLAN_STRIP_F)]
++			[!!(dev->rx_offloads & NIX_RX_OFFLOAD_CHECKSUM_F)]
++			[!!(dev->rx_offloads & NIX_RX_OFFLOAD_PTYPE_F)]
++			[!!(dev->rx_offloads & NIX_RX_OFFLOAD_RSS_F)];
++			event_dev->dequeue_burst	=
++				ssogws_deq_seg_timeout_burst
++			[!!(dev->rx_offloads & NIX_RX_OFFLOAD_TSTAMP_F)]
++			[!!(dev->rx_offloads & NIX_RX_OFFLOAD_MARK_UPDATE_F)]
++			[!!(dev->rx_offloads & NIX_RX_OFFLOAD_VLAN_STRIP_F)]
++			[!!(dev->rx_offloads & NIX_RX_OFFLOAD_CHECKSUM_F)]
++			[!!(dev->rx_offloads & NIX_RX_OFFLOAD_PTYPE_F)]
++			[!!(dev->rx_offloads & NIX_RX_OFFLOAD_RSS_F)];
++		}
++	} else {
++		event_dev->dequeue			= ssogws_deq
++			[!!(dev->rx_offloads & NIX_RX_OFFLOAD_TSTAMP_F)]
++			[!!(dev->rx_offloads & NIX_RX_OFFLOAD_MARK_UPDATE_F)]
++			[!!(dev->rx_offloads & NIX_RX_OFFLOAD_VLAN_STRIP_F)]
++			[!!(dev->rx_offloads & NIX_RX_OFFLOAD_CHECKSUM_F)]
++			[!!(dev->rx_offloads & NIX_RX_OFFLOAD_PTYPE_F)]
++			[!!(dev->rx_offloads & NIX_RX_OFFLOAD_RSS_F)];
++		event_dev->dequeue_burst		= ssogws_deq_burst
++			[!!(dev->rx_offloads & NIX_RX_OFFLOAD_TSTAMP_F)]
++			[!!(dev->rx_offloads & NIX_RX_OFFLOAD_MARK_UPDATE_F)]
++			[!!(dev->rx_offloads & NIX_RX_OFFLOAD_VLAN_STRIP_F)]
++			[!!(dev->rx_offloads & NIX_RX_OFFLOAD_CHECKSUM_F)]
++			[!!(dev->rx_offloads & NIX_RX_OFFLOAD_PTYPE_F)]
++			[!!(dev->rx_offloads & NIX_RX_OFFLOAD_RSS_F)];
++		if (dev->is_timeout_deq) {
++			event_dev->dequeue		= ssogws_deq_timeout
++			[!!(dev->rx_offloads & NIX_RX_OFFLOAD_TSTAMP_F)]
++			[!!(dev->rx_offloads & NIX_RX_OFFLOAD_MARK_UPDATE_F)]
++			[!!(dev->rx_offloads & NIX_RX_OFFLOAD_VLAN_STRIP_F)]
++			[!!(dev->rx_offloads & NIX_RX_OFFLOAD_CHECKSUM_F)]
++			[!!(dev->rx_offloads & NIX_RX_OFFLOAD_PTYPE_F)]
++			[!!(dev->rx_offloads & NIX_RX_OFFLOAD_RSS_F)];
++			event_dev->dequeue_burst	=
++				ssogws_deq_timeout_burst
++			[!!(dev->rx_offloads & NIX_RX_OFFLOAD_TSTAMP_F)]
++			[!!(dev->rx_offloads & NIX_RX_OFFLOAD_MARK_UPDATE_F)]
++			[!!(dev->rx_offloads & NIX_RX_OFFLOAD_VLAN_STRIP_F)]
++			[!!(dev->rx_offloads & NIX_RX_OFFLOAD_CHECKSUM_F)]
++			[!!(dev->rx_offloads & NIX_RX_OFFLOAD_PTYPE_F)]
++			[!!(dev->rx_offloads & NIX_RX_OFFLOAD_RSS_F)];
++		}
+ 	}
+ 
+ 	if (dev->dual_ws) {
+@@ -63,12 +245,112 @@ sso_fastpath_fns_set(struct rte_eventdev *event_dev)
+ 					otx2_ssogws_dual_enq_new_burst;
+ 		event_dev->enqueue_forward_burst =
+ 					otx2_ssogws_dual_enq_fwd_burst;
+-		event_dev->dequeue		= otx2_ssogws_dual_deq;
+-		event_dev->dequeue_burst	= otx2_ssogws_dual_deq_burst;
+-		if (dev->is_timeout_deq) {
+-			event_dev->dequeue	= otx2_ssogws_dual_deq_timeout;
+-			event_dev->dequeue_burst =
+-					otx2_ssogws_dual_deq_timeout_burst;
++
++		if (dev->rx_offloads & NIX_RX_MULTI_SEG_F) {
++			event_dev->dequeue	= ssogws_dual_deq_seg
++				[!!(dev->rx_offloads &
++						NIX_RX_OFFLOAD_TSTAMP_F)]
++				[!!(dev->rx_offloads &
++						NIX_RX_OFFLOAD_MARK_UPDATE_F)]
++				[!!(dev->rx_offloads &
++						NIX_RX_OFFLOAD_VLAN_STRIP_F)]
++				[!!(dev->rx_offloads &
++						NIX_RX_OFFLOAD_CHECKSUM_F)]
++				[!!(dev->rx_offloads & NIX_RX_OFFLOAD_PTYPE_F)]
++				[!!(dev->rx_offloads & NIX_RX_OFFLOAD_RSS_F)];
++			event_dev->dequeue_burst = ssogws_dual_deq_seg_burst
++				[!!(dev->rx_offloads & NIX_RX_OFFLOAD_TSTAMP_F)]
++				[!!(dev->rx_offloads &
++						NIX_RX_OFFLOAD_MARK_UPDATE_F)]
++				[!!(dev->rx_offloads &
++						NIX_RX_OFFLOAD_VLAN_STRIP_F)]
++				[!!(dev->rx_offloads &
++						NIX_RX_OFFLOAD_CHECKSUM_F)]
++				[!!(dev->rx_offloads & NIX_RX_OFFLOAD_PTYPE_F)]
++				[!!(dev->rx_offloads & NIX_RX_OFFLOAD_RSS_F)];
++			if (dev->is_timeout_deq) {
++				event_dev->dequeue	=
++					ssogws_dual_deq_seg_timeout
++					[!!(dev->rx_offloads &
++						NIX_RX_OFFLOAD_TSTAMP_F)]
++					[!!(dev->rx_offloads &
++						NIX_RX_OFFLOAD_MARK_UPDATE_F)]
++					[!!(dev->rx_offloads &
++						NIX_RX_OFFLOAD_VLAN_STRIP_F)]
++					[!!(dev->rx_offloads &
++						NIX_RX_OFFLOAD_CHECKSUM_F)]
++					[!!(dev->rx_offloads &
++							NIX_RX_OFFLOAD_PTYPE_F)]
++					[!!(dev->rx_offloads &
++							NIX_RX_OFFLOAD_RSS_F)];
++				event_dev->dequeue_burst =
++					ssogws_dual_deq_seg_timeout_burst
++					[!!(dev->rx_offloads &
++						NIX_RX_OFFLOAD_TSTAMP_F)]
++					[!!(dev->rx_offloads &
++						NIX_RX_OFFLOAD_MARK_UPDATE_F)]
++					[!!(dev->rx_offloads &
++						NIX_RX_OFFLOAD_VLAN_STRIP_F)]
++					[!!(dev->rx_offloads &
++						NIX_RX_OFFLOAD_CHECKSUM_F)]
++					[!!(dev->rx_offloads &
++							NIX_RX_OFFLOAD_PTYPE_F)]
++					[!!(dev->rx_offloads &
++							NIX_RX_OFFLOAD_RSS_F)];
++			}
++		} else {
++			event_dev->dequeue		= ssogws_dual_deq
++				[!!(dev->rx_offloads &
++						NIX_RX_OFFLOAD_TSTAMP_F)]
++				[!!(dev->rx_offloads &
++						NIX_RX_OFFLOAD_MARK_UPDATE_F)]
++				[!!(dev->rx_offloads &
++						NIX_RX_OFFLOAD_VLAN_STRIP_F)]
++				[!!(dev->rx_offloads &
++						NIX_RX_OFFLOAD_CHECKSUM_F)]
++				[!!(dev->rx_offloads & NIX_RX_OFFLOAD_PTYPE_F)]
++				[!!(dev->rx_offloads & NIX_RX_OFFLOAD_RSS_F)];
++			event_dev->dequeue_burst	= ssogws_dual_deq_burst
++				[!!(dev->rx_offloads &
++						NIX_RX_OFFLOAD_TSTAMP_F)]
++				[!!(dev->rx_offloads &
++						NIX_RX_OFFLOAD_MARK_UPDATE_F)]
++				[!!(dev->rx_offloads &
++						NIX_RX_OFFLOAD_VLAN_STRIP_F)]
++				[!!(dev->rx_offloads &
++						NIX_RX_OFFLOAD_CHECKSUM_F)]
++				[!!(dev->rx_offloads & NIX_RX_OFFLOAD_PTYPE_F)]
++				[!!(dev->rx_offloads & NIX_RX_OFFLOAD_RSS_F)];
++			if (dev->is_timeout_deq) {
++				event_dev->dequeue	=
++					ssogws_dual_deq_timeout
++					[!!(dev->rx_offloads &
++						NIX_RX_OFFLOAD_TSTAMP_F)]
++					[!!(dev->rx_offloads &
++						NIX_RX_OFFLOAD_MARK_UPDATE_F)]
++					[!!(dev->rx_offloads &
++						NIX_RX_OFFLOAD_VLAN_STRIP_F)]
++					[!!(dev->rx_offloads &
++						NIX_RX_OFFLOAD_CHECKSUM_F)]
++					[!!(dev->rx_offloads &
++							NIX_RX_OFFLOAD_PTYPE_F)]
++					[!!(dev->rx_offloads &
++							NIX_RX_OFFLOAD_RSS_F)];
++				event_dev->dequeue_burst =
++					ssogws_dual_deq_timeout_burst
++					[!!(dev->rx_offloads &
++						NIX_RX_OFFLOAD_TSTAMP_F)]
++					[!!(dev->rx_offloads &
++						NIX_RX_OFFLOAD_MARK_UPDATE_F)]
++					[!!(dev->rx_offloads &
++						NIX_RX_OFFLOAD_VLAN_STRIP_F)]
++					[!!(dev->rx_offloads &
++						NIX_RX_OFFLOAD_CHECKSUM_F)]
++					[!!(dev->rx_offloads &
++							NIX_RX_OFFLOAD_PTYPE_F)]
++					[!!(dev->rx_offloads &
++							NIX_RX_OFFLOAD_RSS_F)];
++			}
+ 		}
+ 	}
+ 	rte_mb();
+@@ -1126,6 +1408,8 @@ static struct rte_eventdev_ops otx2_sso_ops = {
+ 	.eth_rx_adapter_caps_get  = otx2_sso_rx_adapter_caps_get,
+ 	.eth_rx_adapter_queue_add = otx2_sso_rx_adapter_queue_add,
+ 	.eth_rx_adapter_queue_del = otx2_sso_rx_adapter_queue_del,
++	.eth_rx_adapter_start = otx2_sso_rx_adapter_start,
++	.eth_rx_adapter_stop = otx2_sso_rx_adapter_stop,
+ 
+ 	.timer_adapter_caps_get = otx2_tim_caps_get,
+ 
+diff --git a/drivers/event/octeontx2/otx2_evdev.h b/drivers/event/octeontx2/otx2_evdev.h
+index 107aa79d48f6..a81a8be6ffec 100644
+--- a/drivers/event/octeontx2/otx2_evdev.h
++++ b/drivers/event/octeontx2/otx2_evdev.h
+@@ -132,6 +132,7 @@ struct otx2_sso_evdev {
+ 	uint64_t nb_xaq_cfg;
+ 	rte_iova_t fc_iova;
+ 	struct rte_mempool *xaq_pool;
++	uint64_t rx_offloads;
+ 	uint16_t rx_adptr_pool_cnt;
+ 	uint32_t adptr_xae_cnt;
+ 	uint64_t *rx_adptr_pools;
+@@ -166,6 +167,7 @@ struct otx2_ssogws {
+ 	/* Get Work Fastpath data */
+ 	OTX2_SSOGWS_OPS;
+ 	uint8_t swtag_req;
++	void *lookup_mem;
+ 	uint8_t port;
+ 	/* Add Work Fastpath data */
+ 	uint64_t xaq_lmt __rte_cache_aligned;
+@@ -182,6 +184,7 @@ struct otx2_ssogws_dual {
+ 	struct otx2_ssogws_state ws_state[2]; /* Ping and Pong */
+ 	uint8_t swtag_req;
+ 	uint8_t vws; /* Ping pong bit */
++	void *lookup_mem;
+ 	uint8_t port;
+ 	/* Add Work Fastpath data */
+ 	uint64_t xaq_lmt __rte_cache_aligned;
+@@ -195,6 +198,28 @@ sso_pmd_priv(const struct rte_eventdev *event_dev)
+ 	return event_dev->data->dev_private;
+ }
+ 
++static const union mbuf_initializer mbuf_init = {
++	.fields = {
++		.data_off = RTE_PKTMBUF_HEADROOM,
++		.refcnt = 1,
++		.nb_segs = 1,
++		.port = 0
++	}
++};
++
++static __rte_always_inline void
++otx2_wqe_to_mbuf(uint64_t get_work1, const uint64_t mbuf, uint8_t port_id,
++		 const uint32_t tag, const uint32_t flags,
++		 const void * const lookup_mem)
++{
++	struct nix_wqe_hdr_s *wqe = (struct nix_wqe_hdr_s *)get_work1;
++
++	otx2_nix_cqe_to_mbuf((struct nix_cqe_hdr_s *)wqe, tag,
++			     (struct rte_mbuf *)mbuf, lookup_mem,
++			     mbuf_init.value | (uint64_t)port_id << 48, flags);
++
++}
++
+ static inline int
+ parse_kvargs_flag(const char *key, const char *value, void *opaque)
+ {
+@@ -213,6 +238,9 @@ parse_kvargs_value(const char *key, const char *value, void *opaque)
+ 	return 0;
+ }
+ 
++#define SSO_RX_ADPTR_ENQ_FASTPATH_FUNC	NIX_RX_FASTPATH_MODES
++#define SSO_TX_ADPTR_ENQ_FASTPATH_FUNC	NIX_TX_FASTPATH_MODES
++
+ /* Single WS API's */
+ uint16_t otx2_ssogws_enq(void *port, const struct rte_event *ev);
+ uint16_t otx2_ssogws_enq_burst(void *port, const struct rte_event ev[],
+@@ -222,15 +250,6 @@ uint16_t otx2_ssogws_enq_new_burst(void *port, const struct rte_event ev[],
+ uint16_t otx2_ssogws_enq_fwd_burst(void *port, const struct rte_event ev[],
+ 				   uint16_t nb_events);
+ 
+-uint16_t otx2_ssogws_deq(void *port, struct rte_event *ev,
+-			 uint64_t timeout_ticks);
+-uint16_t otx2_ssogws_deq_burst(void *port, struct rte_event ev[],
+-			       uint16_t nb_events, uint64_t timeout_ticks);
+-uint16_t otx2_ssogws_deq_timeout(void *port, struct rte_event *ev,
+-				 uint64_t timeout_ticks);
+-uint16_t otx2_ssogws_deq_timeout_burst(void *port, struct rte_event ev[],
+-				       uint16_t nb_events,
+-				       uint64_t timeout_ticks);
+ /* Dual WS API's */
+ uint16_t otx2_ssogws_dual_enq(void *port, const struct rte_event *ev);
+ uint16_t otx2_ssogws_dual_enq_burst(void *port, const struct rte_event ev[],
+@@ -240,15 +259,63 @@ uint16_t otx2_ssogws_dual_enq_new_burst(void *port, const struct rte_event ev[],
+ uint16_t otx2_ssogws_dual_enq_fwd_burst(void *port, const struct rte_event ev[],
+ 					uint16_t nb_events);
+ 
+-uint16_t otx2_ssogws_dual_deq(void *port, struct rte_event *ev,
+-			      uint64_t timeout_ticks);
+-uint16_t otx2_ssogws_dual_deq_burst(void *port, struct rte_event ev[],
+-				    uint16_t nb_events, uint64_t timeout_ticks);
+-uint16_t otx2_ssogws_dual_deq_timeout(void *port, struct rte_event *ev,
+-				      uint64_t timeout_ticks);
+-uint16_t otx2_ssogws_dual_deq_timeout_burst(void *port, struct rte_event ev[],
+-					    uint16_t nb_events,
+-					    uint64_t timeout_ticks);
++/* Auto generated API's */
++#define R(name, f5, f4, f3, f2, f1, f0, flags)				       \
++uint16_t otx2_ssogws_deq_ ##name(void *port, struct rte_event *ev,	       \
++				 uint64_t timeout_ticks);		       \
++uint16_t otx2_ssogws_deq_burst_ ##name(void *port, struct rte_event ev[],      \
++				       uint16_t nb_events,		       \
++				       uint64_t timeout_ticks);		       \
++uint16_t otx2_ssogws_deq_timeout_ ##name(void *port,			       \
++					 struct rte_event *ev,		       \
++					 uint64_t timeout_ticks);	       \
++uint16_t otx2_ssogws_deq_timeout_burst_ ##name(void *port,		       \
++					       struct rte_event ev[],	       \
++					       uint16_t nb_events,	       \
++					       uint64_t timeout_ticks);	       \
++uint16_t otx2_ssogws_deq_seg_ ##name(void *port, struct rte_event *ev,	       \
++				     uint64_t timeout_ticks);		       \
++uint16_t otx2_ssogws_deq_seg_burst_ ##name(void *port,			       \
++					   struct rte_event ev[],	       \
++					   uint16_t nb_events,		       \
++					   uint64_t timeout_ticks);	       \
++uint16_t otx2_ssogws_deq_seg_timeout_ ##name(void *port,		       \
++					     struct rte_event *ev,	       \
++					     uint64_t timeout_ticks);	       \
++uint16_t otx2_ssogws_deq_seg_timeout_burst_ ##name(void *port,		       \
++						   struct rte_event ev[],      \
++						   uint16_t nb_events,	       \
++						   uint64_t timeout_ticks);    \
++									       \
++uint16_t otx2_ssogws_dual_deq_ ##name(void *port, struct rte_event *ev,	       \
++				      uint64_t timeout_ticks);		       \
++uint16_t otx2_ssogws_dual_deq_burst_ ##name(void *port,			       \
++					    struct rte_event ev[],	       \
++					    uint16_t nb_events,		       \
++					    uint64_t timeout_ticks);	       \
++uint16_t otx2_ssogws_dual_deq_timeout_ ##name(void *port,		       \
++					      struct rte_event *ev,	       \
++					      uint64_t timeout_ticks);	       \
++uint16_t otx2_ssogws_dual_deq_timeout_burst_ ##name(void *port,		       \
++						    struct rte_event ev[],     \
++						    uint16_t nb_events,	       \
++						    uint64_t timeout_ticks);   \
++uint16_t otx2_ssogws_dual_deq_seg_ ##name(void *port, struct rte_event *ev,    \
++					  uint64_t timeout_ticks);	       \
++uint16_t otx2_ssogws_dual_deq_seg_burst_ ##name(void *port,		       \
++						struct rte_event ev[],	       \
++						uint16_t nb_events,	       \
++						uint64_t timeout_ticks);       \
++uint16_t otx2_ssogws_dual_deq_seg_timeout_ ##name(void *port,		       \
++						  struct rte_event *ev,	       \
++						  uint64_t timeout_ticks);     \
++uint16_t otx2_ssogws_dual_deq_seg_timeout_burst_ ##name(void *port,	       \
++							struct rte_event ev[], \
++							uint16_t nb_events,    \
++						       uint64_t timeout_ticks);\
++
++SSO_RX_ADPTR_ENQ_FASTPATH_FUNC
++#undef R
+ 
+ void sso_updt_xae_cnt(struct otx2_sso_evdev *dev, void *data,
+ 		      uint32_t event_type);
+@@ -265,7 +332,10 @@ int otx2_sso_rx_adapter_queue_add(const struct rte_eventdev *event_dev,
+ int otx2_sso_rx_adapter_queue_del(const struct rte_eventdev *event_dev,
+ 				  const struct rte_eth_dev *eth_dev,
+ 				  int32_t rx_queue_id);
+-
++int otx2_sso_rx_adapter_start(const struct rte_eventdev *event_dev,
++			      const struct rte_eth_dev *eth_dev);
++int otx2_sso_rx_adapter_stop(const struct rte_eventdev *event_dev,
++			     const struct rte_eth_dev *eth_dev);
+ /* Clean up API's */
+ typedef void (*otx2_handle_event_t)(void *arg, struct rte_event ev);
+ void ssogws_flush_events(struct otx2_ssogws *ws, uint8_t queue_id,
+diff --git a/drivers/event/octeontx2/otx2_evdev_adptr.c b/drivers/event/octeontx2/otx2_evdev_adptr.c
+index 12469fade564..e605fd1d4389 100644
+--- a/drivers/event/octeontx2/otx2_evdev_adptr.c
++++ b/drivers/event/octeontx2/otx2_evdev_adptr.c
+@@ -232,6 +232,25 @@ sso_updt_xae_cnt(struct otx2_sso_evdev *dev, void *data, uint32_t event_type)
+ 	}
+ }
+ 
++static inline void
++sso_updt_lookup_mem(const struct rte_eventdev *event_dev, void *lookup_mem)
++{
++	struct otx2_sso_evdev *dev = sso_pmd_priv(event_dev);
++	int i;
++
++	for (i = 0; i < dev->nb_event_ports; i++) {
++		if (dev->dual_ws) {
++			struct otx2_ssogws_dual *ws = event_dev->data->ports[i];
++
++			ws->lookup_mem = lookup_mem;
++		} else {
++			struct otx2_ssogws *ws = event_dev->data->ports[i];
++
++			ws->lookup_mem = lookup_mem;
++		}
++	}
++}
++
+ int
+ otx2_sso_rx_adapter_queue_add(const struct rte_eventdev *event_dev,
+ 			      const struct rte_eth_dev *eth_dev,
+@@ -258,6 +277,8 @@ otx2_sso_rx_adapter_queue_add(const struct rte_eventdev *event_dev,
+ 					     queue_conf->ev.sched_type,
+ 					     queue_conf->ev.queue_id, port);
+ 		}
++		rxq = eth_dev->data->rx_queues[0];
++		sso_updt_lookup_mem(event_dev, rxq->lookup_mem);
+ 	} else {
+ 		rxq = eth_dev->data->rx_queues[rx_queue_id];
+ 		sso_updt_xae_cnt(dev, rxq, RTE_EVENT_TYPE_ETHDEV);
+@@ -266,6 +287,7 @@ otx2_sso_rx_adapter_queue_add(const struct rte_eventdev *event_dev,
+ 		rc |= sso_rxq_enable(otx2_eth_dev, (uint16_t)rx_queue_id,
+ 				     queue_conf->ev.sched_type,
+ 				     queue_conf->ev.queue_id, port);
++		sso_updt_lookup_mem(event_dev, rxq->lookup_mem);
+ 	}
+ 
+ 	if (rc < 0) {
+@@ -274,6 +296,9 @@ otx2_sso_rx_adapter_queue_add(const struct rte_eventdev *event_dev,
+ 		return rc;
+ 	}
+ 
++	dev->rx_offloads |= otx2_eth_dev->rx_offload_flags;
++	sso_fastpath_fns_set((struct rte_eventdev *)(uintptr_t)event_dev);
++
+ 	return 0;
+ }
+ 
+@@ -303,3 +328,23 @@ otx2_sso_rx_adapter_queue_del(const struct rte_eventdev *event_dev,
+ 
+ 	return rc;
+ }
++
++int
++otx2_sso_rx_adapter_start(const struct rte_eventdev *event_dev,
++			  const struct rte_eth_dev *eth_dev)
++{
++	RTE_SET_USED(event_dev);
++	RTE_SET_USED(eth_dev);
++
++	return 0;
++}
++
++int
++otx2_sso_rx_adapter_stop(const struct rte_eventdev *event_dev,
++			 const struct rte_eth_dev *eth_dev)
++{
++	RTE_SET_USED(event_dev);
++	RTE_SET_USED(eth_dev);
++
++	return 0;
++}
+diff --git a/drivers/event/octeontx2/otx2_worker.c b/drivers/event/octeontx2/otx2_worker.c
+index 7a6d4cad2c58..ea2d0b5a4b43 100644
+--- a/drivers/event/octeontx2/otx2_worker.c
++++ b/drivers/event/octeontx2/otx2_worker.c
+@@ -81,60 +81,132 @@ otx2_ssogws_release_event(struct otx2_ssogws *ws)
+ 	otx2_ssogws_swtag_flush(ws);
+ }
+ 
+-uint16_t __hot
+-otx2_ssogws_deq(void *port, struct rte_event *ev, uint64_t timeout_ticks)
+-{
+-	struct otx2_ssogws *ws = port;
+-
+-	RTE_SET_USED(timeout_ticks);
+-
+-	if (ws->swtag_req) {
+-		ws->swtag_req = 0;
+-		otx2_ssogws_swtag_wait(ws);
+-		return 1;
+-	}
+-
+-	return otx2_ssogws_get_work(ws, ev);
++#define R(name, f5, f4, f3, f2, f1, f0, flags)				\
++uint16_t __hot								\
++otx2_ssogws_deq_ ##name(void *port, struct rte_event *ev,		\
++			uint64_t timeout_ticks)				\
++{									\
++	struct otx2_ssogws *ws = port;					\
++									\
++	RTE_SET_USED(timeout_ticks);					\
++									\
++	if (ws->swtag_req) {						\
++		ws->swtag_req = 0;					\
++		otx2_ssogws_swtag_wait(ws);				\
++		return 1;						\
++	}								\
++									\
++	return otx2_ssogws_get_work(ws, ev, flags, ws->lookup_mem);	\
++}									\
++									\
++uint16_t __hot								\
++otx2_ssogws_deq_burst_ ##name(void *port, struct rte_event ev[],	\
++			      uint16_t nb_events,			\
++			      uint64_t timeout_ticks)			\
++{									\
++	RTE_SET_USED(nb_events);					\
++									\
++	return otx2_ssogws_deq_ ##name(port, ev, timeout_ticks);	\
++}									\
++									\
++uint16_t __hot								\
++otx2_ssogws_deq_timeout_ ##name(void *port, struct rte_event *ev,	\
++				uint64_t timeout_ticks)			\
++{									\
++	struct otx2_ssogws *ws = port;					\
++	uint16_t ret = 1;						\
++	uint64_t iter;							\
++									\
++	if (ws->swtag_req) {						\
++		ws->swtag_req = 0;					\
++		otx2_ssogws_swtag_wait(ws);				\
++		return ret;						\
++	}								\
++									\
++	ret = otx2_ssogws_get_work(ws, ev, flags, ws->lookup_mem);	\
++	for (iter = 1; iter < timeout_ticks && (ret == 0); iter++)	\
++		ret = otx2_ssogws_get_work(ws, ev, flags,		\
++					   ws->lookup_mem);		\
++									\
++	return ret;							\
++}									\
++									\
++uint16_t __hot								\
++otx2_ssogws_deq_timeout_burst_ ##name(void *port, struct rte_event ev[],\
++				      uint16_t nb_events,		\
++				      uint64_t timeout_ticks)		\
++{									\
++	RTE_SET_USED(nb_events);					\
++									\
++	return otx2_ssogws_deq_timeout_ ##name(port, ev, timeout_ticks);\
++}									\
++									\
++uint16_t __hot								\
++otx2_ssogws_deq_seg_ ##name(void *port, struct rte_event *ev,		\
++			    uint64_t timeout_ticks)			\
++{									\
++	struct otx2_ssogws *ws = port;					\
++									\
++	RTE_SET_USED(timeout_ticks);					\
++									\
++	if (ws->swtag_req) {						\
++		ws->swtag_req = 0;					\
++		otx2_ssogws_swtag_wait(ws);				\
++		return 1;						\
++	}								\
++									\
++	return otx2_ssogws_get_work(ws, ev, flags | NIX_RX_MULTI_SEG_F,	\
++				    ws->lookup_mem);			\
++}									\
++									\
++uint16_t __hot								\
++otx2_ssogws_deq_seg_burst_ ##name(void *port, struct rte_event ev[],	\
++				  uint16_t nb_events,			\
++				  uint64_t timeout_ticks)		\
++{									\
++	RTE_SET_USED(nb_events);					\
++									\
++	return otx2_ssogws_deq_seg_ ##name(port, ev, timeout_ticks);	\
++}									\
++									\
++uint16_t __hot								\
++otx2_ssogws_deq_seg_timeout_ ##name(void *port, struct rte_event *ev,	\
++				    uint64_t timeout_ticks)		\
++{									\
++	struct otx2_ssogws *ws = port;					\
++	uint16_t ret = 1;						\
++	uint64_t iter;							\
++									\
++	if (ws->swtag_req) {						\
++		ws->swtag_req = 0;					\
++		otx2_ssogws_swtag_wait(ws);				\
++		return ret;						\
++	}								\
++									\
++	ret = otx2_ssogws_get_work(ws, ev, flags | NIX_RX_MULTI_SEG_F,	\
++				   ws->lookup_mem);			\
++	for (iter = 1; iter < timeout_ticks && (ret == 0); iter++)	\
++		ret = otx2_ssogws_get_work(ws, ev,			\
++					   flags | NIX_RX_MULTI_SEG_F,	\
++					   ws->lookup_mem);		\
++									\
++	return ret;							\
++}									\
++									\
++uint16_t __hot								\
++otx2_ssogws_deq_seg_timeout_burst_ ##name(void *port,			\
++					  struct rte_event ev[],	\
++					  uint16_t nb_events,		\
++					  uint64_t timeout_ticks)	\
++{									\
++	RTE_SET_USED(nb_events);					\
++									\
++	return otx2_ssogws_deq_seg_timeout_ ##name(port, ev,		\
++						   timeout_ticks);	\
+ }
+ 
+-uint16_t __hot
+-otx2_ssogws_deq_burst(void *port, struct rte_event ev[], uint16_t nb_events,
+-		      uint64_t timeout_ticks)
+-{
+-	RTE_SET_USED(nb_events);
+-
+-	return otx2_ssogws_deq(port, ev, timeout_ticks);
+-}
+-
+-uint16_t __hot
+-otx2_ssogws_deq_timeout(void *port, struct rte_event *ev,
+-			uint64_t timeout_ticks)
+-{
+-	struct otx2_ssogws *ws = port;
+-	uint16_t ret = 1;
+-	uint64_t iter;
+-
+-	if (ws->swtag_req) {
+-		ws->swtag_req = 0;
+-		otx2_ssogws_swtag_wait(ws);
+-		return ret;
+-	}
+-
+-	ret = otx2_ssogws_get_work(ws, ev);
+-	for (iter = 1; iter < timeout_ticks && (ret == 0); iter++)
+-		ret = otx2_ssogws_get_work(ws, ev);
+-
+-	return ret;
+-}
+-
+-uint16_t __hot
+-otx2_ssogws_deq_timeout_burst(void *port, struct rte_event ev[],
+-			      uint16_t nb_events, uint64_t timeout_ticks)
+-{
+-	RTE_SET_USED(nb_events);
+-
+-	return otx2_ssogws_deq_timeout(port, ev, timeout_ticks);
+-}
++SSO_RX_ADPTR_ENQ_FASTPATH_FUNC
++#undef R
+ 
+ uint16_t __hot
+ otx2_ssogws_enq(void *port, const struct rte_event *ev)
+@@ -221,7 +293,7 @@ ssogws_flush_events(struct otx2_ssogws *ws, uint8_t queue_id, uintptr_t base,
+ 
+ 	while (aq_cnt || cq_ds_cnt || ds_cnt) {
+ 		otx2_write64(val, ws->getwrk_op);
+-		otx2_ssogws_get_work_empty(ws, &ev);
++		otx2_ssogws_get_work_empty(ws, &ev, 0);
+ 		if (fn != NULL && ev.u64 != 0)
+ 			fn(arg, ev);
+ 		if (ev.sched_type != SSO_TT_EMPTY)
+diff --git a/drivers/event/octeontx2/otx2_worker.h b/drivers/event/octeontx2/otx2_worker.h
+index f06ff064ed11..accf7f956aa6 100644
+--- a/drivers/event/octeontx2/otx2_worker.h
++++ b/drivers/event/octeontx2/otx2_worker.h
+@@ -14,15 +14,19 @@
+ /* SSO Operations */
+ 
+ static __rte_always_inline uint16_t
+-otx2_ssogws_get_work(struct otx2_ssogws *ws, struct rte_event *ev)
++otx2_ssogws_get_work(struct otx2_ssogws *ws, struct rte_event *ev,
++		     const uint32_t flags, const void * const lookup_mem)
+ {
+ 	union otx2_sso_event event;
+ 	uint64_t get_work1;
++	uint64_t mbuf;
+ 
+ 	otx2_write64(BIT_ULL(16) | /* wait for work. */
+ 		     1, /* Use Mask set 0. */
+ 		     ws->getwrk_op);
+ 
++	if (flags & NIX_RX_OFFLOAD_PTYPE_F)
++		rte_prefetch_non_temporal(lookup_mem);
+ #ifdef RTE_ARCH_ARM64
+ 	asm volatile(
+ 			"		ldr %[tag], [%[tag_loc]]	\n"
+@@ -34,9 +38,12 @@ otx2_ssogws_get_work(struct otx2_ssogws *ws, struct rte_event *ev)
+ 			"		ldr %[wqp], [%[wqp_loc]]	\n"
+ 			"		tbnz %[tag], 63, rty%=		\n"
+ 			"done%=:	dmb ld				\n"
+-			"		prfm pldl1keep, [%[wqp]]	\n"
++			"		prfm pldl1keep, [%[wqp], #8]	\n"
++			"		sub %[mbuf], %[wqp], #0x80	\n"
++			"		prfm pldl1keep, [%[mbuf]]	\n"
+ 			: [tag] "=&r" (event.get_work0),
+-			  [wqp] "=&r" (get_work1)
++			  [wqp] "=&r" (get_work1),
++			  [mbuf] "=&r" (mbuf)
+ 			: [tag_loc] "r" (ws->tag_op),
+ 			  [wqp_loc] "r" (ws->wqp_op)
+ 			);
+@@ -47,6 +54,8 @@ otx2_ssogws_get_work(struct otx2_ssogws *ws, struct rte_event *ev)
+ 
+ 	get_work1 = otx2_read64(ws->wqp_op);
+ 	rte_prefetch0((const void *)get_work1);
++	mbuf = (uint64_t)((char *)get_work1 - sizeof(struct rte_mbuf));
++	rte_prefetch0((const void *)mbuf);
+ #endif
+ 
+ 	event.get_work0 = (event.get_work0 & (0x3ull << 32)) << 6 |
+@@ -55,6 +64,12 @@ otx2_ssogws_get_work(struct otx2_ssogws *ws, struct rte_event *ev)
+ 	ws->cur_tt = event.sched_type;
+ 	ws->cur_grp = event.queue_id;
+ 
++	if (event.sched_type != SSO_TT_EMPTY &&
++	    event.event_type == RTE_EVENT_TYPE_ETHDEV) {
++		otx2_wqe_to_mbuf(get_work1, mbuf, event.sub_event_type,
++				 (uint32_t) event.get_work0, flags, lookup_mem);
++		get_work1 = mbuf;
++	}
+ 
+ 	ev->event = event.get_work0;
+ 	ev->u64 = get_work1;
+@@ -64,10 +79,12 @@ otx2_ssogws_get_work(struct otx2_ssogws *ws, struct rte_event *ev)
+ 
+ /* Used in cleaning up workslot. */
+ static __rte_always_inline uint16_t
+-otx2_ssogws_get_work_empty(struct otx2_ssogws *ws, struct rte_event *ev)
++otx2_ssogws_get_work_empty(struct otx2_ssogws *ws, struct rte_event *ev,
++			   const uint32_t flags)
+ {
+ 	union otx2_sso_event event;
+ 	uint64_t get_work1;
++	uint64_t mbuf;
+ 
+ #ifdef RTE_ARCH_ARM64
+ 	asm volatile(
+@@ -80,9 +97,12 @@ otx2_ssogws_get_work_empty(struct otx2_ssogws *ws, struct rte_event *ev)
+ 			"		ldr %[wqp], [%[wqp_loc]]	\n"
+ 			"		tbnz %[tag], 63, rty%=		\n"
+ 			"done%=:	dmb ld				\n"
+-			"		prfm pldl1keep, [%[wqp]]	\n"
++			"		prfm pldl1keep, [%[wqp], #8]	\n"
++			"		sub %[mbuf], %[wqp], #0x80	\n"
++			"		prfm pldl1keep, [%[mbuf]]	\n"
+ 			: [tag] "=&r" (event.get_work0),
+-			  [wqp] "=&r" (get_work1)
++			  [wqp] "=&r" (get_work1),
++			  [mbuf] "=&r" (mbuf)
+ 			: [tag_loc] "r" (ws->tag_op),
+ 			  [wqp_loc] "r" (ws->wqp_op)
+ 			);
+@@ -92,7 +112,9 @@ otx2_ssogws_get_work_empty(struct otx2_ssogws *ws, struct rte_event *ev)
+ 		event.get_work0 = otx2_read64(ws->tag_op);
+ 
+ 	get_work1 = otx2_read64(ws->wqp_op);
+-	rte_prefetch0((const void *)get_work1);
++	rte_prefetch_non_temporal((const void *)get_work1);
++	mbuf = (uint64_t)((char *)get_work1 - sizeof(struct rte_mbuf));
++	rte_prefetch_non_temporal((const void *)mbuf);
+ #endif
+ 
+ 	event.get_work0 = (event.get_work0 & (0x3ull << 32)) << 6 |
+@@ -101,6 +123,13 @@ otx2_ssogws_get_work_empty(struct otx2_ssogws *ws, struct rte_event *ev)
+ 	ws->cur_tt = event.sched_type;
+ 	ws->cur_grp = event.queue_id;
+ 
++	if (event.sched_type != SSO_TT_EMPTY &&
++	    event.event_type == RTE_EVENT_TYPE_ETHDEV) {
++		otx2_wqe_to_mbuf(get_work1, mbuf, event.sub_event_type,
++				 (uint32_t) event.get_work0, flags, NULL);
++		get_work1 = mbuf;
++	}
++
+ 	ev->event = event.get_work0;
+ 	ev->u64 = get_work1;
+ 
+diff --git a/drivers/event/octeontx2/otx2_worker_dual.c b/drivers/event/octeontx2/otx2_worker_dual.c
+index 58fd588f6d04..b5cf9ac1255c 100644
+--- a/drivers/event/octeontx2/otx2_worker_dual.c
++++ b/drivers/event/octeontx2/otx2_worker_dual.c
+@@ -140,68 +140,162 @@ otx2_ssogws_dual_enq_fwd_burst(void *port, const struct rte_event ev[],
+ 	return 1;
+ }
+ 
+-uint16_t __hot
+-otx2_ssogws_dual_deq(void *port, struct rte_event *ev, uint64_t timeout_ticks)
+-{
+-	struct otx2_ssogws_dual *ws = port;
+-	uint8_t gw;
+-
+-	RTE_SET_USED(timeout_ticks);
+-	if (ws->swtag_req) {
+-		otx2_ssogws_swtag_wait((struct otx2_ssogws *)
+-				       &ws->ws_state[!ws->vws]);
+-		ws->swtag_req = 0;
+-		return 1;
+-	}
+-
+-	gw = otx2_ssogws_dual_get_work(&ws->ws_state[ws->vws],
+-				       &ws->ws_state[!ws->vws], ev);
+-	ws->vws = !ws->vws;
+-
+-	return gw;
+-}
+-
+-uint16_t __hot
+-otx2_ssogws_dual_deq_burst(void *port, struct rte_event ev[],
+-			   uint16_t nb_events, uint64_t timeout_ticks)
+-{
+-	RTE_SET_USED(nb_events);
+-
+-	return otx2_ssogws_dual_deq(port, ev, timeout_ticks);
+-}
+-
+-uint16_t __hot
+-otx2_ssogws_dual_deq_timeout(void *port, struct rte_event *ev,
+-			     uint64_t timeout_ticks)
+-{
+-	struct otx2_ssogws_dual *ws = port;
+-	uint64_t iter;
+-	uint8_t gw;
+-
+-	if (ws->swtag_req) {
+-		otx2_ssogws_swtag_wait((struct otx2_ssogws *)
+-				       &ws->ws_state[!ws->vws]);
+-		ws->swtag_req = 0;
+-		return 1;
+-	}
+-
+-	gw = otx2_ssogws_dual_get_work(&ws->ws_state[ws->vws],
+-				       &ws->ws_state[!ws->vws], ev);
+-	ws->vws = !ws->vws;
+-	for (iter = 1; iter < timeout_ticks && (gw == 0); iter++) {
+-		gw = otx2_ssogws_dual_get_work(&ws->ws_state[ws->vws],
+-					       &ws->ws_state[!ws->vws], ev);
+-		ws->vws = !ws->vws;
+-	}
+-
+-	return gw;
++#define R(name, f5, f4, f3, f2, f1, f0, flags)				\
++uint16_t __hot								\
++otx2_ssogws_dual_deq_ ##name(void *port, struct rte_event *ev,		\
++			     uint64_t timeout_ticks)			\
++{									\
++	struct otx2_ssogws_dual *ws = port;				\
++	uint8_t gw;							\
++									\
++	RTE_SET_USED(timeout_ticks);					\
++	if (ws->swtag_req) {						\
++		otx2_ssogws_swtag_wait((struct otx2_ssogws *)		\
++				       &ws->ws_state[!ws->vws]);	\
++		ws->swtag_req = 0;					\
++		return 1;						\
++	}								\
++									\
++	gw = otx2_ssogws_dual_get_work(&ws->ws_state[ws->vws],		\
++				       &ws->ws_state[!ws->vws], ev,	\
++				       flags, ws->lookup_mem);		\
++	ws->vws = !ws->vws;						\
++									\
++	return gw;							\
++}									\
++									\
++uint16_t __hot								\
++otx2_ssogws_dual_deq_burst_ ##name(void *port, struct rte_event ev[],	\
++				   uint16_t nb_events,			\
++				   uint64_t timeout_ticks)		\
++{									\
++	RTE_SET_USED(nb_events);					\
++									\
++	return otx2_ssogws_dual_deq_ ##name(port, ev, timeout_ticks);	\
++}									\
++									\
++uint16_t __hot								\
++otx2_ssogws_dual_deq_timeout_ ##name(void *port, struct rte_event *ev,	\
++				     uint64_t timeout_ticks)		\
++{									\
++	struct otx2_ssogws_dual *ws = port;				\
++	uint64_t iter;							\
++	uint8_t gw;							\
++									\
++	if (ws->swtag_req) {						\
++		otx2_ssogws_swtag_wait((struct otx2_ssogws *)		\
++				       &ws->ws_state[!ws->vws]);	\
++		ws->swtag_req = 0;					\
++		return 1;						\
++	}								\
++									\
++	gw = otx2_ssogws_dual_get_work(&ws->ws_state[ws->vws],		\
++				       &ws->ws_state[!ws->vws], ev,	\
++				       flags, ws->lookup_mem);		\
++	ws->vws = !ws->vws;						\
++	for (iter = 1; iter < timeout_ticks && (gw == 0); iter++) {	\
++		gw = otx2_ssogws_dual_get_work(&ws->ws_state[ws->vws],	\
++					       &ws->ws_state[!ws->vws],	\
++					       ev, flags,		\
++					       ws->lookup_mem);		\
++		ws->vws = !ws->vws;					\
++	}								\
++									\
++	return gw;							\
++}									\
++									\
++uint16_t __hot								\
++otx2_ssogws_dual_deq_timeout_burst_ ##name(void *port,			\
++					   struct rte_event ev[],	\
++					   uint16_t nb_events,		\
++					   uint64_t timeout_ticks)	\
++{									\
++	RTE_SET_USED(nb_events);					\
++									\
++	return otx2_ssogws_dual_deq_timeout_ ##name(port, ev,		\
++						    timeout_ticks);	\
++}									\
++									\
++uint16_t __hot								\
++otx2_ssogws_dual_deq_seg_ ##name(void *port, struct rte_event *ev,	\
++				 uint64_t timeout_ticks)		\
++{									\
++	struct otx2_ssogws_dual *ws = port;				\
++	uint8_t gw;							\
++									\
++	RTE_SET_USED(timeout_ticks);					\
++	if (ws->swtag_req) {						\
++		otx2_ssogws_swtag_wait((struct otx2_ssogws *)		\
++				       &ws->ws_state[!ws->vws]);	\
++		ws->swtag_req = 0;					\
++		return 1;						\
++	}								\
++									\
++	gw = otx2_ssogws_dual_get_work(&ws->ws_state[ws->vws],		\
++				       &ws->ws_state[!ws->vws], ev,	\
++				       flags | NIX_RX_MULTI_SEG_F,	\
++				       ws->lookup_mem);			\
++	ws->vws = !ws->vws;						\
++									\
++	return gw;							\
++}									\
++									\
++uint16_t __hot								\
++otx2_ssogws_dual_deq_seg_burst_ ##name(void *port,			\
++				       struct rte_event ev[],		\
++				       uint16_t nb_events,		\
++				       uint64_t timeout_ticks)		\
++{									\
++	RTE_SET_USED(nb_events);					\
++									\
++	return otx2_ssogws_dual_deq_seg_ ##name(port, ev,		\
++						timeout_ticks);		\
++}									\
++									\
++uint16_t __hot								\
++otx2_ssogws_dual_deq_seg_timeout_ ##name(void *port,			\
++					 struct rte_event *ev,		\
++					 uint64_t timeout_ticks)	\
++{									\
++	struct otx2_ssogws_dual *ws = port;				\
++	uint64_t iter;							\
++	uint8_t gw;							\
++									\
++	if (ws->swtag_req) {						\
++		otx2_ssogws_swtag_wait((struct otx2_ssogws *)		\
++				       &ws->ws_state[!ws->vws]);	\
++		ws->swtag_req = 0;					\
++		return 1;						\
++	}								\
++									\
++	gw = otx2_ssogws_dual_get_work(&ws->ws_state[ws->vws],		\
++				       &ws->ws_state[!ws->vws], ev,	\
++				       flags | NIX_RX_MULTI_SEG_F,	\
++				       ws->lookup_mem);			\
++	ws->vws = !ws->vws;						\
++	for (iter = 1; iter < timeout_ticks && (gw == 0); iter++) {	\
++		gw = otx2_ssogws_dual_get_work(&ws->ws_state[ws->vws],	\
++					       &ws->ws_state[!ws->vws],	\
++					       ev, flags |		\
++					       NIX_RX_MULTI_SEG_F,	\
++					       ws->lookup_mem);		\
++		ws->vws = !ws->vws;					\
++	}								\
++									\
++	return gw;							\
++}									\
++									\
++uint16_t __hot								\
++otx2_ssogws_dual_deq_seg_timeout_burst_ ##name(void *port,		\
++					       struct rte_event ev[],	\
++					       uint16_t nb_events,	\
++					       uint64_t timeout_ticks)	\
++{									\
++	RTE_SET_USED(nb_events);					\
++									\
++	return otx2_ssogws_dual_deq_seg_timeout_ ##name(port, ev,	\
++							timeout_ticks);	\
+ }
+ 
+-uint16_t __hot
+-otx2_ssogws_dual_deq_timeout_burst(void *port, struct rte_event ev[],
+-				   uint16_t nb_events, uint64_t timeout_ticks)
+-{
+-	RTE_SET_USED(nb_events);
+-
+-	return otx2_ssogws_dual_deq_timeout(port, ev, timeout_ticks);
+-}
++SSO_RX_ADPTR_ENQ_FASTPATH_FUNC
++#undef R
+diff --git a/drivers/event/octeontx2/otx2_worker_dual.h b/drivers/event/octeontx2/otx2_worker_dual.h
+index d8453d1f796d..32fe61b44f30 100644
+--- a/drivers/event/octeontx2/otx2_worker_dual.h
++++ b/drivers/event/octeontx2/otx2_worker_dual.h
+@@ -15,12 +15,16 @@
+ static __rte_always_inline uint16_t
+ otx2_ssogws_dual_get_work(struct otx2_ssogws_state *ws,
+ 			  struct otx2_ssogws_state *ws_pair,
+-			  struct rte_event *ev)
++			  struct rte_event *ev, const uint32_t flags,
++			  const void * const lookup_mem)
+ {
+ 	const uint64_t set_gw = BIT_ULL(16) | 1;
+ 	union otx2_sso_event event;
+ 	uint64_t get_work1;
++	uint64_t mbuf;
+ 
++	if (flags & NIX_RX_OFFLOAD_PTYPE_F)
++		rte_prefetch_non_temporal(lookup_mem);
+ #ifdef RTE_ARCH_ARM64
+ 	asm volatile(
+ 			"        ldr %[tag], [%[tag_loc]]    \n"
+@@ -33,9 +37,12 @@ otx2_ssogws_dual_get_work(struct otx2_ssogws_state *ws,
+ 			"        tbnz %[tag], 63, rty%=      \n"
+ 			"done%=: str %[gw], [%[pong]]        \n"
+ 			"        dmb ld                      \n"
+-			"        prfm pldl1keep, [%[wqp]]    \n"
++			"        prfm pldl1keep, [%[wqp], #8]\n"
++			"        sub %[mbuf], %[wqp], #0x80  \n"
++			"        prfm pldl1keep, [%[mbuf]]   \n"
+ 			: [tag] "=&r" (event.get_work0),
+-			  [wqp] "=&r" (get_work1)
++			  [wqp] "=&r" (get_work1),
++			  [mbuf] "=&r" (mbuf)
+ 			: [tag_loc] "r" (ws->tag_op),
+ 			  [wqp_loc] "r" (ws->wqp_op),
+ 			  [gw] "r" (set_gw),
+@@ -49,6 +56,8 @@ otx2_ssogws_dual_get_work(struct otx2_ssogws_state *ws,
+ 	otx2_write64(set_gw, ws_pair->getwrk_op);
+ 
+ 	rte_prefetch0((const void *)get_work1);
++	mbuf = (uint64_t)((char *)get_work1 - sizeof(struct rte_mbuf));
++	rte_prefetch0((const void *)mbuf);
+ #endif
+ 	event.get_work0 = (event.get_work0 & (0x3ull << 32)) << 6 |
+ 		(event.get_work0 & (0x3FFull << 36)) << 4 |
+@@ -56,6 +65,13 @@ otx2_ssogws_dual_get_work(struct otx2_ssogws_state *ws,
+ 	ws->cur_tt = event.sched_type;
+ 	ws->cur_grp = event.queue_id;
+ 
++	if (event.sched_type != SSO_TT_EMPTY &&
++	    event.event_type == RTE_EVENT_TYPE_ETHDEV) {
++		otx2_wqe_to_mbuf(get_work1, mbuf, event.sub_event_type,
++				 (uint32_t) event.get_work0, flags, lookup_mem);
++		get_work1 = mbuf;
++	}
++
+ 	ev->event = event.get_work0;
+ 	ev->u64 = get_work1;
+ 
+-- 
+2.14.4
+

@@ -1,0 +1,216 @@
+From 5bd59fd264701c439b5d49d0c6f7a886e659dad5 Mon Sep 17 00:00:00 2001
+From: Stephen Hemminger <stephen@networkplumber.org>
+Date: Fri, 5 Jul 2019 10:16:16 -0700
+Subject: [PATCH 148/154] net: deinline non-critical ethernet functions
+
+Formatting Ethernet address and getting a random value are
+not in critical path so they should not be inlined.
+
+Signed-off-by: Stephen Hemminger <stephen@networkplumber.org>
+Acked-by: Rami Rosen <ramirose@gmail.com>
+Reviewed-by: Andrew Rybchenko <arybchenko@solarflare.com>
+Acked-by: Olivier Matz <olivier.matz@6wind.com>
+---
+ drivers/net/axgbe/Makefile         |  2 +-
+ drivers/net/memif/Makefile         | 34 ++++++++++++++++++++++++++++++++++
+ drivers/net/octeontx2/Makefile     |  2 +-
+ lib/librte_net/Makefile            |  1 +
+ lib/librte_net/meson.build         |  2 +-
+ lib/librte_net/rte_ether.c         | 29 +++++++++++++++++++++++++++++
+ lib/librte_net/rte_ether.h         | 27 +++++----------------------
+ lib/librte_net/rte_net_version.map |  8 ++++++++
+ 8 files changed, 80 insertions(+), 25 deletions(-)
+ create mode 100644 drivers/net/memif/Makefile
+ create mode 100644 lib/librte_net/rte_ether.c
+
+diff --git a/drivers/net/axgbe/Makefile b/drivers/net/axgbe/Makefile
+index 72215aedaf55..c2d4336800c0 100644
+--- a/drivers/net/axgbe/Makefile
++++ b/drivers/net/axgbe/Makefile
+@@ -17,7 +17,7 @@ LIBABIVER := 1
+ 
+ LDLIBS += -lrte_eal -lrte_mbuf -lrte_mempool
+ LDLIBS += -lrte_pci -lrte_bus_pci
+-LDLIBS += -lrte_ethdev
++LDLIBS += -lrte_ethdev -lrte_net
+ 
+ #
+ # all source are stored in SRCS-y
+diff --git a/drivers/net/memif/Makefile b/drivers/net/memif/Makefile
+new file mode 100644
+index 000000000000..3d92b08f259b
+--- /dev/null
++++ b/drivers/net/memif/Makefile
+@@ -0,0 +1,34 @@
++# SPDX-License-Identifier: BSD-3-Clause
++# Copyright 2018-2019 Cisco Systems, Inc.  All rights reserved.
++
++include $(RTE_SDK)/mk/rte.vars.mk
++
++#
++# library name
++#
++LIB = librte_pmd_memif.a
++
++EXPORT_MAP := rte_pmd_memif_version.map
++
++LIBABIVER := 1
++
++CFLAGS += -O3
++CFLAGS += $(WERROR_FLAGS)
++CFLAGS += -DALLOW_EXPERIMENTAL_API
++# Experimantal APIs:
++# - rte_intr_callback_unregister_pending
++# - rte_mp_action_register
++# - rte_mp_reply
++# - rte_mp_request_sync
++LDLIBS += -lrte_eal -lrte_mbuf -lrte_mempool
++LDLIBS += -lrte_ethdev -lrte_kvargs -lrte_net
++LDLIBS += -lrte_hash
++LDLIBS += -lrte_bus_vdev
++
++#
++# all source are stored in SRCS-y
++#
++SRCS-$(CONFIG_RTE_LIBRTE_PMD_MEMIF) += rte_eth_memif.c
++SRCS-$(CONFIG_RTE_LIBRTE_PMD_MEMIF) += memif_socket.c
++
++include $(RTE_SDK)/mk/rte.lib.mk
+diff --git a/drivers/net/octeontx2/Makefile b/drivers/net/octeontx2/Makefile
+index d08d3d854b46..66cb5f25bb2b 100644
+--- a/drivers/net/octeontx2/Makefile
++++ b/drivers/net/octeontx2/Makefile
+@@ -54,7 +54,7 @@ SRCS-$(CONFIG_RTE_LIBRTE_OCTEONTX2_PMD) += \
+ 	otx2_ethdev_debug.c \
+ 	otx2_ethdev_devargs.c
+ 
+-LDLIBS += -lrte_common_octeontx2 -lrte_mempool_octeontx2 -lrte_eal
++LDLIBS += -lrte_common_octeontx2 -lrte_mempool_octeontx2 -lrte_eal -lrte_net
+ LDLIBS += -lrte_ethdev -lrte_bus_pci -lrte_kvargs -lrte_mbuf  -lrte_mempool -lm
+ 
+ include $(RTE_SDK)/mk/rte.lib.mk
+diff --git a/lib/librte_net/Makefile b/lib/librte_net/Makefile
+index c3082069ab50..1244c9fd54c9 100644
+--- a/lib/librte_net/Makefile
++++ b/lib/librte_net/Makefile
+@@ -14,6 +14,7 @@ LIBABIVER := 1
+ 
+ SRCS-$(CONFIG_RTE_LIBRTE_NET) := rte_net.c
+ SRCS-$(CONFIG_RTE_LIBRTE_NET) += rte_net_crc.c
++SRCS-$(CONFIG_RTE_LIBRTE_NET) += rte_ether.c
+ SRCS-$(CONFIG_RTE_LIBRTE_NET) += rte_arp.c
+ 
+ # install includes
+diff --git a/lib/librte_net/meson.build b/lib/librte_net/meson.build
+index 7d66f693cbf3..868a93fd6b6b 100644
+--- a/lib/librte_net/meson.build
++++ b/lib/librte_net/meson.build
+@@ -16,5 +16,5 @@ headers = files('rte_ip.h',
+ 	'rte_net_crc.h',
+ 	'rte_mpls.h')
+ 
+-sources = files('rte_arp.c', 'rte_net.c', 'rte_net_crc.c')
++sources = files('rte_arp.c', 'rte_ether.c', 'rte_net.c', 'rte_net_crc.c')
+ deps += ['mbuf']
+diff --git a/lib/librte_net/rte_ether.c b/lib/librte_net/rte_ether.c
+new file mode 100644
+index 000000000000..974fe815b335
+--- /dev/null
++++ b/lib/librte_net/rte_ether.c
+@@ -0,0 +1,29 @@
++/* SPDX-License-Identifier: BSD-3-Clause
++ * Copyright(c) 2010-2014 Intel Corporation
++ */
++
++#include <rte_ether.h>
++
++void
++rte_eth_random_addr(uint8_t *addr)
++{
++	uint64_t rand = rte_rand();
++	uint8_t *p = (uint8_t *)&rand;
++
++	rte_memcpy(addr, p, RTE_ETHER_ADDR_LEN);
++	addr[0] &= (uint8_t)~RTE_ETHER_GROUP_ADDR;	/* clear multicast bit */
++	addr[0] |= RTE_ETHER_LOCAL_ADMIN_ADDR;	/* set local assignment bit */
++}
++
++void
++rte_ether_format_addr(char *buf, uint16_t size,
++		      const struct rte_ether_addr *eth_addr)
++{
++	snprintf(buf, size, "%02X:%02X:%02X:%02X:%02X:%02X",
++		 eth_addr->addr_bytes[0],
++		 eth_addr->addr_bytes[1],
++		 eth_addr->addr_bytes[2],
++		 eth_addr->addr_bytes[3],
++		 eth_addr->addr_bytes[4],
++		 eth_addr->addr_bytes[5]);
++}
+diff --git a/lib/librte_net/rte_ether.h b/lib/librte_net/rte_ether.h
+index c2c5e249ffe9..82ce9da3e9d1 100644
+--- a/lib/librte_net/rte_ether.h
++++ b/lib/librte_net/rte_ether.h
+@@ -204,15 +204,8 @@ static inline int is_valid_assigned_ether_addr(const struct ether_addr *ea)
+  * @param addr
+  *   A pointer to Ethernet address.
+  */
+-static inline void eth_random_addr(uint8_t *addr)
+-{
+-	uint64_t rand = rte_rand();
+-	uint8_t *p = (uint8_t *)&rand;
+-
+-	rte_memcpy(addr, p, ETHER_ADDR_LEN);
+-	addr[0] &= (uint8_t)~ETHER_GROUP_ADDR;       /* clear multicast bit */
+-	addr[0] |= ETHER_LOCAL_ADMIN_ADDR;  /* set local assignment bit */
+-}
++void
++rte_eth_random_addr(uint8_t *addr);
+ 
+ /**
+  * Fast copy an Ethernet address.
+@@ -251,19 +244,9 @@ static inline void ether_addr_copy(const struct ether_addr *ea_from,
+  * @param eth_addr
+  *   A pointer to a ether_addr structure.
+  */
+-static inline void
+-ether_format_addr(char *buf, uint16_t size,
+-		  const struct ether_addr *eth_addr)
+-{
+-	snprintf(buf, size, "%02X:%02X:%02X:%02X:%02X:%02X",
+-		 eth_addr->addr_bytes[0],
+-		 eth_addr->addr_bytes[1],
+-		 eth_addr->addr_bytes[2],
+-		 eth_addr->addr_bytes[3],
+-		 eth_addr->addr_bytes[4],
+-		 eth_addr->addr_bytes[5]);
+-}
+-
++void
++rte_ether_format_addr(char *buf, uint16_t size,
++		      const struct rte_ether_addr *eth_addr);
+ /**
+  * Ethernet header: Contains the destination address, source address
+  * and frame type.
+diff --git a/lib/librte_net/rte_net_version.map b/lib/librte_net/rte_net_version.map
+index 26c06e7c7ae7..4001f4557922 100644
+--- a/lib/librte_net/rte_net_version.map
++++ b/lib/librte_net/rte_net_version.map
+@@ -13,6 +13,14 @@ DPDK_17.05 {
+ 
+ } DPDK_16.11;
+ 
++DPDK_19.08 {
++	global:
++
++	rte_eth_random_addr;
++	rte_ether_format_addr;
++
++} DPDK_17.05;
++
+ EXPERIMENTAL {
+ 	global:
+ 
+-- 
+2.14.4
+

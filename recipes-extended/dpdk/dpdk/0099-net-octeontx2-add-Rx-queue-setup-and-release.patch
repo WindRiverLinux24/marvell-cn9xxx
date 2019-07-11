@@ -1,0 +1,531 @@
+From 78fa149c21a3e9a3778fc8206a2c030a2d584326 Mon Sep 17 00:00:00 2001
+From: Jerin Jacob <jerinj@marvell.com>
+Date: Wed, 29 May 2019 18:14:20 +0530
+Subject: [PATCH 099/154] net/octeontx2: add Rx queue setup and release
+
+Add Rx queue setup and release.
+
+Signed-off-by: Jerin Jacob <jerinj@marvell.com>
+Signed-off-by: Nithin Dabilpuram <ndabilpuram@marvell.com>
+Signed-off-by: Vamsi Attunuru <vattunuru@marvell.com>
+---
+ doc/guides/nics/features/octeontx2.ini     |   1 +
+ doc/guides/nics/features/octeontx2_vec.ini |   1 +
+ doc/guides/nics/features/octeontx2_vf.ini  |   1 +
+ drivers/net/octeontx2/Makefile             |   2 +-
+ drivers/net/octeontx2/otx2_ethdev.c        | 310 +++++++++++++++++++++++++++++
+ drivers/net/octeontx2/otx2_ethdev.h        |  51 +++++
+ drivers/net/octeontx2/otx2_ethdev_ops.c    |   2 +
+ mk/rte.app.mk                              |   2 +-
+ 8 files changed, 368 insertions(+), 2 deletions(-)
+
+diff --git a/doc/guides/nics/features/octeontx2.ini b/doc/guides/nics/features/octeontx2.ini
+index f2d47d57b6c4..d0a2204d2a3c 100644
+--- a/doc/guides/nics/features/octeontx2.ini
++++ b/doc/guides/nics/features/octeontx2.ini
+@@ -10,6 +10,7 @@ SR-IOV               = Y
+ Multiprocess aware   = Y
+ Link status          = Y
+ Link status event    = Y
++Runtime Rx queue setup = Y
+ Promiscuous mode     = Y
+ Allmulticast mode    = Y
+ Unicast MAC filter   = Y
+diff --git a/doc/guides/nics/features/octeontx2_vec.ini b/doc/guides/nics/features/octeontx2_vec.ini
+index a67353d2a38b..64125a73f579 100644
+--- a/doc/guides/nics/features/octeontx2_vec.ini
++++ b/doc/guides/nics/features/octeontx2_vec.ini
+@@ -10,6 +10,7 @@ SR-IOV               = Y
+ Multiprocess aware   = Y
+ Link status          = Y
+ Link status event    = Y
++Runtime Rx queue setup = Y
+ Promiscuous mode     = Y
+ Allmulticast mode    = Y
+ Unicast MAC filter   = Y
+diff --git a/doc/guides/nics/features/octeontx2_vf.ini b/doc/guides/nics/features/octeontx2_vf.ini
+index 97d66ddde5c7..acda5e68051d 100644
+--- a/doc/guides/nics/features/octeontx2_vf.ini
++++ b/doc/guides/nics/features/octeontx2_vf.ini
+@@ -9,6 +9,7 @@ Lock-free Tx queue   = Y
+ Multiprocess aware   = Y
+ Link status          = Y
+ Link status event    = Y
++Runtime Rx queue setup = Y
+ RSS hash             = Y
+ RSS key update       = Y
+ RSS reta update      = Y
+diff --git a/drivers/net/octeontx2/Makefile b/drivers/net/octeontx2/Makefile
+index 455676a14133..84095b9356ad 100644
+--- a/drivers/net/octeontx2/Makefile
++++ b/drivers/net/octeontx2/Makefile
+@@ -42,6 +42,6 @@ SRCS-$(CONFIG_RTE_LIBRTE_OCTEONTX2_PMD) += \
+ 	otx2_ethdev_devargs.c
+ 
+ LDLIBS += -lrte_common_octeontx2 -lrte_mempool_octeontx2 -lrte_eal
+-LDLIBS += -lrte_ethdev -lrte_bus_pci -lrte_kvargs
++LDLIBS += -lrte_ethdev -lrte_bus_pci -lrte_kvargs -lrte_mbuf  -lrte_mempool -lm
+ 
+ include $(RTE_SDK)/mk/rte.lib.mk
+diff --git a/drivers/net/octeontx2/otx2_ethdev.c b/drivers/net/octeontx2/otx2_ethdev.c
+index 5289c79e8fbd..dbbc2263dc73 100644
+--- a/drivers/net/octeontx2/otx2_ethdev.c
++++ b/drivers/net/octeontx2/otx2_ethdev.c
+@@ -2,9 +2,15 @@
+  * Copyright(C) 2019 Marvell International Ltd.
+  */
+ 
++#include <inttypes.h>
++#include <math.h>
++
+ #include <rte_ethdev_pci.h>
+ #include <rte_io.h>
+ #include <rte_malloc.h>
++#include <rte_mbuf.h>
++#include <rte_mbuf_pool_ops.h>
++#include <rte_mempool.h>
+ 
+ #include "otx2_ethdev.h"
+ 
+@@ -114,6 +120,308 @@ nix_lf_free(struct otx2_eth_dev *dev)
+ 	return otx2_mbox_process(mbox);
+ }
+ 
++static inline void
++nix_rx_queue_reset(struct otx2_eth_rxq *rxq)
++{
++	rxq->head = 0;
++	rxq->available = 0;
++}
++
++static inline uint32_t
++nix_qsize_to_val(enum nix_q_size_e qsize)
++{
++	return (16UL << (qsize * 2));
++}
++
++static inline enum nix_q_size_e
++nix_qsize_clampup_get(struct otx2_eth_dev *dev, uint32_t val)
++{
++	int i;
++
++	if (otx2_ethdev_fixup_is_min_4k_q(dev))
++		i = nix_q_size_4K;
++	else
++		i = nix_q_size_16;
++
++	for (; i < nix_q_size_max; i++)
++		if (val <= nix_qsize_to_val(i))
++			break;
++
++	if (i >= nix_q_size_max)
++		i = nix_q_size_max - 1;
++
++	return i;
++}
++
++static int
++nix_cq_rq_init(struct rte_eth_dev *eth_dev, struct otx2_eth_dev *dev,
++	       uint16_t qid, struct otx2_eth_rxq *rxq, struct rte_mempool *mp)
++{
++	struct otx2_mbox *mbox = dev->mbox;
++	const struct rte_memzone *rz;
++	uint32_t ring_size, cq_size;
++	struct nix_aq_enq_req *aq;
++	uint16_t first_skip;
++	int rc;
++
++	cq_size = rxq->qlen;
++	ring_size = cq_size * NIX_CQ_ENTRY_SZ;
++	rz = rte_eth_dma_zone_reserve(eth_dev, "cq", qid, ring_size,
++				      NIX_CQ_ALIGN, dev->node);
++	if (rz == NULL) {
++		otx2_err("Failed to allocate mem for cq hw ring");
++		rc = -ENOMEM;
++		goto fail;
++	}
++	memset(rz->addr, 0, rz->len);
++	rxq->desc = (uintptr_t)rz->addr;
++	rxq->qmask = cq_size - 1;
++
++	aq = otx2_mbox_alloc_msg_nix_aq_enq(mbox);
++	aq->qidx = qid;
++	aq->ctype = NIX_AQ_CTYPE_CQ;
++	aq->op = NIX_AQ_INSTOP_INIT;
++
++	aq->cq.ena = 1;
++	aq->cq.caching = 1;
++	aq->cq.qsize = rxq->qsize;
++	aq->cq.base = rz->iova;
++	aq->cq.avg_level = 0xff;
++	aq->cq.cq_err_int_ena = BIT(NIX_CQERRINT_CQE_FAULT);
++	aq->cq.cq_err_int_ena |= BIT(NIX_CQERRINT_DOOR_ERR);
++
++	/* Many to one reduction */
++	aq->cq.qint_idx = qid % dev->qints;
++
++	if (otx2_ethdev_fixup_is_limit_cq_full(dev)) {
++		uint16_t min_rx_drop;
++		const float rx_cq_skid = 1024 * 256;
++
++		min_rx_drop = ceil(rx_cq_skid / (float)cq_size);
++		aq->cq.drop = min_rx_drop;
++		aq->cq.drop_ena = 1;
++	}
++
++	rc = otx2_mbox_process(mbox);
++	if (rc) {
++		otx2_err("Failed to init cq context");
++		goto fail;
++	}
++
++	aq = otx2_mbox_alloc_msg_nix_aq_enq(mbox);
++	aq->qidx = qid;
++	aq->ctype = NIX_AQ_CTYPE_RQ;
++	aq->op = NIX_AQ_INSTOP_INIT;
++
++	aq->rq.sso_ena = 0;
++	aq->rq.cq = qid; /* RQ to CQ 1:1 mapped */
++	aq->rq.spb_ena = 0;
++	aq->rq.lpb_aura = npa_lf_aura_handle_to_aura(mp->pool_id);
++	first_skip = (sizeof(struct rte_mbuf));
++	first_skip += RTE_PKTMBUF_HEADROOM;
++	first_skip += rte_pktmbuf_priv_size(mp);
++	rxq->data_off = first_skip;
++
++	first_skip /= 8; /* Expressed in number of dwords */
++	aq->rq.first_skip = first_skip;
++	aq->rq.later_skip = (sizeof(struct rte_mbuf) / 8);
++	aq->rq.flow_tagw = 32; /* 32-bits */
++	aq->rq.lpb_sizem1 = rte_pktmbuf_data_room_size(mp);
++	aq->rq.lpb_sizem1 += rte_pktmbuf_priv_size(mp);
++	aq->rq.lpb_sizem1 += sizeof(struct rte_mbuf);
++	aq->rq.lpb_sizem1 /= 8;
++	aq->rq.lpb_sizem1 -= 1; /* Expressed in size minus one */
++	aq->rq.ena = 1;
++	aq->rq.pb_caching = 0x2; /* First cache aligned block to LLC */
++	aq->rq.xqe_imm_size = 0; /* No pkt data copy to CQE */
++	aq->rq.rq_int_ena = 0;
++	/* Many to one reduction */
++	aq->rq.qint_idx = qid % dev->qints;
++
++	if (otx2_ethdev_fixup_is_limit_cq_full(dev))
++		aq->rq.xqe_drop_ena = 1;
++
++	rc = otx2_mbox_process(mbox);
++	if (rc) {
++		otx2_err("Failed to init rq context");
++		goto fail;
++	}
++
++	return 0;
++fail:
++	return rc;
++}
++
++static int
++nix_cq_rq_uninit(struct rte_eth_dev *eth_dev, struct otx2_eth_rxq *rxq)
++{
++	struct otx2_eth_dev *dev = otx2_eth_pmd_priv(eth_dev);
++	struct otx2_mbox *mbox = dev->mbox;
++	struct nix_aq_enq_req *aq;
++	int rc;
++
++	/* RQ is already disabled */
++	/* Disable CQ */
++	aq = otx2_mbox_alloc_msg_nix_aq_enq(mbox);
++	aq->qidx = rxq->rq;
++	aq->ctype = NIX_AQ_CTYPE_CQ;
++	aq->op = NIX_AQ_INSTOP_WRITE;
++
++	aq->cq.ena = 0;
++	aq->cq_mask.ena = ~(aq->cq_mask.ena);
++
++	rc = otx2_mbox_process(mbox);
++	if (rc < 0) {
++		otx2_err("Failed to disable cq context");
++		return rc;
++	}
++
++	return 0;
++}
++
++static inline int
++nix_get_data_off(struct otx2_eth_dev *dev)
++{
++	RTE_SET_USED(dev);
++
++	return 0;
++}
++
++uint64_t
++otx2_nix_rxq_mbuf_setup(struct otx2_eth_dev *dev, uint16_t port_id)
++{
++	struct rte_mbuf mb_def;
++	uint64_t *tmp;
++
++	RTE_BUILD_BUG_ON(offsetof(struct rte_mbuf, data_off) % 8 != 0);
++	RTE_BUILD_BUG_ON(offsetof(struct rte_mbuf, refcnt) -
++				offsetof(struct rte_mbuf, data_off) != 2);
++	RTE_BUILD_BUG_ON(offsetof(struct rte_mbuf, nb_segs) -
++				offsetof(struct rte_mbuf, data_off) != 4);
++	RTE_BUILD_BUG_ON(offsetof(struct rte_mbuf, port) -
++				offsetof(struct rte_mbuf, data_off) != 6);
++	mb_def.nb_segs = 1;
++	mb_def.data_off = RTE_PKTMBUF_HEADROOM + nix_get_data_off(dev);
++	mb_def.port = port_id;
++	rte_mbuf_refcnt_set(&mb_def, 1);
++
++	/* Prevent compiler reordering: rearm_data covers previous fields */
++	rte_compiler_barrier();
++	tmp = (uint64_t *)&mb_def.rearm_data;
++
++	return *tmp;
++}
++
++static void
++otx2_nix_rx_queue_release(void *rx_queue)
++{
++	struct otx2_eth_rxq *rxq = rx_queue;
++
++	if (!rxq)
++		return;
++
++	otx2_nix_dbg("Releasing rxq %u", rxq->rq);
++	nix_cq_rq_uninit(rxq->eth_dev, rxq);
++	rte_free(rx_queue);
++}
++
++static int
++otx2_nix_rx_queue_setup(struct rte_eth_dev *eth_dev, uint16_t rq,
++			uint16_t nb_desc, unsigned int socket,
++			const struct rte_eth_rxconf *rx_conf,
++			struct rte_mempool *mp)
++{
++	struct otx2_eth_dev *dev = otx2_eth_pmd_priv(eth_dev);
++	struct rte_mempool_ops *ops;
++	struct otx2_eth_rxq *rxq;
++	const char *platform_ops;
++	enum nix_q_size_e qsize;
++	uint64_t offloads;
++	int rc;
++
++	rc = -EINVAL;
++
++	/* Compile time check to make sure all fast path elements in a CL */
++	RTE_BUILD_BUG_ON(offsetof(struct otx2_eth_rxq, slow_path_start) >= 128);
++
++	/* Sanity checks */
++	if (rx_conf->rx_deferred_start == 1) {
++		otx2_err("Deferred Rx start is not supported");
++		goto fail;
++	}
++
++	platform_ops = rte_mbuf_platform_mempool_ops();
++	/* This driver needs octeontx2_npa mempool ops to work */
++	ops = rte_mempool_get_ops(mp->ops_index);
++	if (strncmp(ops->name, platform_ops, RTE_MEMPOOL_OPS_NAMESIZE)) {
++		otx2_err("mempool ops should be of octeontx2_npa type");
++		goto fail;
++	}
++
++	if (mp->pool_id == 0) {
++		otx2_err("Invalid pool_id");
++		goto fail;
++	}
++
++	/* Free memory prior to re-allocation if needed */
++	if (eth_dev->data->rx_queues[rq] != NULL) {
++		otx2_nix_dbg("Freeing memory prior to re-allocation %d", rq);
++		otx2_nix_rx_queue_release(eth_dev->data->rx_queues[rq]);
++		eth_dev->data->rx_queues[rq] = NULL;
++	}
++
++	offloads = rx_conf->offloads | eth_dev->data->dev_conf.rxmode.offloads;
++	dev->rx_offloads |= offloads;
++
++	/* Find the CQ queue size */
++	qsize = nix_qsize_clampup_get(dev, nb_desc);
++	/* Allocate rxq memory */
++	rxq = rte_zmalloc_socket("otx2 rxq", sizeof(*rxq), OTX2_ALIGN, socket);
++	if (rxq == NULL) {
++		otx2_err("Failed to allocate rq=%d", rq);
++		rc = -ENOMEM;
++		goto fail;
++	}
++
++	rxq->eth_dev = eth_dev;
++	rxq->rq = rq;
++	rxq->cq_door = dev->base + NIX_LF_CQ_OP_DOOR;
++	rxq->cq_status = (int64_t *)(dev->base + NIX_LF_CQ_OP_STATUS);
++	rxq->wdata = (uint64_t)rq << 32;
++	rxq->aura = npa_lf_aura_handle_to_aura(mp->pool_id);
++	rxq->mbuf_initializer = otx2_nix_rxq_mbuf_setup(dev,
++							eth_dev->data->port_id);
++	rxq->offloads = offloads;
++	rxq->pool = mp;
++	rxq->qlen = nix_qsize_to_val(qsize);
++	rxq->qsize = qsize;
++
++	/* Alloc completion queue */
++	rc = nix_cq_rq_init(eth_dev, dev, rq, rxq, mp);
++	if (rc) {
++		otx2_err("Failed to allocate rxq=%u", rq);
++		goto free_rxq;
++	}
++
++	rxq->qconf.socket_id = socket;
++	rxq->qconf.nb_desc = nb_desc;
++	rxq->qconf.mempool = mp;
++	memcpy(&rxq->qconf.conf.rx, rx_conf, sizeof(struct rte_eth_rxconf));
++
++	nix_rx_queue_reset(rxq);
++	otx2_nix_dbg("rq=%d pool=%s qsize=%d nb_desc=%d->%d",
++		     rq, mp->name, qsize, nb_desc, rxq->qlen);
++
++	eth_dev->data->rx_queues[rq] = rxq;
++	eth_dev->data->rx_queue_state[rq] = RTE_ETH_QUEUE_STATE_STOPPED;
++	return 0;
++
++free_rxq:
++	otx2_nix_rx_queue_release(rxq);
++fail:
++	return rc;
++}
++
+ static int
+ otx2_nix_configure(struct rte_eth_dev *eth_dev)
+ {
+@@ -241,6 +549,8 @@ static const struct eth_dev_ops otx2_eth_dev_ops = {
+ 	.dev_infos_get            = otx2_nix_info_get,
+ 	.dev_configure            = otx2_nix_configure,
+ 	.link_update              = otx2_nix_link_update,
++	.rx_queue_setup           = otx2_nix_rx_queue_setup,
++	.rx_queue_release         = otx2_nix_rx_queue_release,
+ 	.stats_get                = otx2_nix_dev_stats_get,
+ 	.stats_reset              = otx2_nix_dev_stats_reset,
+ 	.get_reg                  = otx2_nix_dev_get_reg,
+diff --git a/drivers/net/octeontx2/otx2_ethdev.h b/drivers/net/octeontx2/otx2_ethdev.h
+index 19a4e45b07a6..a0939333607c 100644
+--- a/drivers/net/octeontx2/otx2_ethdev.h
++++ b/drivers/net/octeontx2/otx2_ethdev.h
+@@ -10,6 +10,9 @@
+ #include <rte_common.h>
+ #include <rte_ethdev.h>
+ #include <rte_kvargs.h>
++#include <rte_mbuf.h>
++#include <rte_mempool.h>
++#include <rte_string_fns.h>
+ 
+ #include "otx2_common.h"
+ #include "otx2_dev.h"
+@@ -68,6 +71,7 @@
+ #define NIX_RX_MIN_DESC_ALIGN		16
+ #define NIX_RX_NB_SEG_MAX		6
+ #define NIX_CQ_ENTRY_SZ			128
++#define NIX_CQ_ALIGN			512
+ 
+ /* If PTP is enabled additional SEND MEM DESC is required which
+  * takes 2 words, hence max 7 iova address are possible
+@@ -116,6 +120,19 @@
+ #define NIX_DEFAULT_RSS_CTX_GROUP  0
+ #define NIX_DEFAULT_RSS_MCAM_IDX  -1
+ 
++enum nix_q_size_e {
++	nix_q_size_16,	/* 16 entries */
++	nix_q_size_64,	/* 64 entries */
++	nix_q_size_256,
++	nix_q_size_1K,
++	nix_q_size_4K,
++	nix_q_size_16K,
++	nix_q_size_64K,
++	nix_q_size_256K,
++	nix_q_size_1M,	/* Million entries */
++	nix_q_size_max
++};
++
+ struct otx2_qint {
+ 	struct rte_eth_dev *eth_dev;
+ 	uint8_t qintx;
+@@ -131,6 +148,16 @@ struct otx2_rss_info {
+ 	uint8_t key[NIX_HASH_KEY_SIZE];
+ };
+ 
++struct otx2_eth_qconf {
++	union {
++		struct rte_eth_txconf tx;
++		struct rte_eth_rxconf rx;
++	} conf;
++	void *mempool;
++	uint32_t socket_id;
++	uint16_t nb_desc;
++};
++
+ struct otx2_npc_flow_info {
+ 	uint16_t channel; /*rx channel */
+ 	uint16_t flow_prealloc_size;
+@@ -177,6 +204,29 @@ struct otx2_eth_dev {
+ 	struct rte_eth_dev *eth_dev;
+ } __rte_cache_aligned;
+ 
++struct otx2_eth_rxq {
++	uint64_t mbuf_initializer;
++	uint64_t data_off;
++	uintptr_t desc;
++	void *lookup_mem;
++	uintptr_t cq_door;
++	uint64_t wdata;
++	int64_t *cq_status;
++	uint32_t head;
++	uint32_t qmask;
++	uint32_t available;
++	uint16_t rq;
++	struct otx2_timesync_info *tstamp;
++	MARKER slow_path_start;
++	uint64_t aura;
++	uint64_t offloads;
++	uint32_t qlen;
++	struct rte_mempool *pool;
++	enum nix_q_size_e qsize;
++	struct rte_eth_dev *eth_dev;
++	struct otx2_eth_qconf qconf;
++} __rte_cache_aligned;
++
+ static inline struct otx2_eth_dev *
+ otx2_eth_pmd_priv(struct rte_eth_dev *eth_dev)
+ {
+@@ -192,6 +242,7 @@ void otx2_nix_promisc_enable(struct rte_eth_dev *eth_dev);
+ void otx2_nix_promisc_disable(struct rte_eth_dev *eth_dev);
+ void otx2_nix_allmulticast_enable(struct rte_eth_dev *eth_dev);
+ void otx2_nix_allmulticast_disable(struct rte_eth_dev *eth_dev);
++uint64_t otx2_nix_rxq_mbuf_setup(struct otx2_eth_dev *dev, uint16_t port_id);
+ 
+ /* Link */
+ void otx2_nix_toggle_flag_link_cfg(struct otx2_eth_dev *dev, bool set);
+diff --git a/drivers/net/octeontx2/otx2_ethdev_ops.c b/drivers/net/octeontx2/otx2_ethdev_ops.c
+index 301a597f8360..71d36b44acf7 100644
+--- a/drivers/net/octeontx2/otx2_ethdev_ops.c
++++ b/drivers/net/octeontx2/otx2_ethdev_ops.c
+@@ -143,4 +143,6 @@ otx2_nix_info_get(struct rte_eth_dev *eth_dev, struct rte_eth_dev_info *devinfo)
+ 	devinfo->speed_capa |= ETH_LINK_SPEED_1G | ETH_LINK_SPEED_10G |
+ 				ETH_LINK_SPEED_25G | ETH_LINK_SPEED_40G |
+ 				ETH_LINK_SPEED_50G | ETH_LINK_SPEED_100G;
++
++	devinfo->dev_capa = RTE_ETH_DEV_CAPA_RUNTIME_RX_QUEUE_SETUP;
+ }
+diff --git a/mk/rte.app.mk b/mk/rte.app.mk
+index 2e6a51877b8f..60bef68d3c90 100644
+--- a/mk/rte.app.mk
++++ b/mk/rte.app.mk
+@@ -190,7 +190,7 @@ _LDLIBS-$(CONFIG_RTE_LIBRTE_MVPP2_PMD)      += -lrte_pmd_mvpp2
+ _LDLIBS-$(CONFIG_RTE_LIBRTE_MVNETA_PMD)     += -lrte_pmd_mvneta
+ _LDLIBS-$(CONFIG_RTE_LIBRTE_NFP_PMD)        += -lrte_pmd_nfp
+ _LDLIBS-$(CONFIG_RTE_LIBRTE_PMD_NULL)       += -lrte_pmd_null
+-_LDLIBS-$(CONFIG_RTE_LIBRTE_OCTEONTX2_PMD)  += -lrte_pmd_octeontx2
++_LDLIBS-$(CONFIG_RTE_LIBRTE_OCTEONTX2_PMD)  += -lrte_pmd_octeontx2 -lm
+ _LDLIBS-$(CONFIG_RTE_LIBRTE_PMD_PCAP)       += -lrte_pmd_pcap -lpcap
+ _LDLIBS-$(CONFIG_RTE_LIBRTE_QEDE_PMD)       += -lrte_pmd_qede
+ _LDLIBS-$(CONFIG_RTE_LIBRTE_PMD_RING)       += -lrte_pmd_ring
+-- 
+2.14.4
+

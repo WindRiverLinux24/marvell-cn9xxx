@@ -1,0 +1,261 @@
+From 4a6f6299aa8f0d21a34771404416840fca7a5941 Mon Sep 17 00:00:00 2001
+From: Jerin Jacob <jerinj@marvell.com>
+Date: Sat, 22 Jun 2019 18:54:06 +0530
+Subject: [PATCH 017/154] mempool/octeontx2: add build infra and device probe
+
+Add the make and meson based build infrastructure along
+with the mempool(NPA) device probe.
+
+Signed-off-by: Jerin Jacob <jerinj@marvell.com>
+Signed-off-by: Pavan Nikhilesh <pbhagavatula@marvell.com>
+---
+ MAINTAINERS                                        |  1 +
+ config/common_base                                 |  5 ++
+ drivers/common/Makefile                            |  3 ++
+ drivers/mempool/Makefile                           |  1 +
+ drivers/mempool/meson.build                        |  2 +-
+ drivers/mempool/octeontx2/Makefile                 | 36 ++++++++++++++
+ drivers/mempool/octeontx2/meson.build              | 20 ++++++++
+ drivers/mempool/octeontx2/otx2_mempool.c           | 57 ++++++++++++++++++++++
+ .../octeontx2/rte_mempool_octeontx2_version.map    |  4 ++
+ mk/rte.app.mk                                      |  4 ++
+ 10 files changed, 132 insertions(+), 1 deletion(-)
+ create mode 100644 drivers/mempool/octeontx2/Makefile
+ create mode 100644 drivers/mempool/octeontx2/meson.build
+ create mode 100644 drivers/mempool/octeontx2/otx2_mempool.c
+ create mode 100644 drivers/mempool/octeontx2/rte_mempool_octeontx2_version.map
+
+diff --git a/MAINTAINERS b/MAINTAINERS
+index 85f415bfd808..b7fc064f7730 100644
+--- a/MAINTAINERS
++++ b/MAINTAINERS
+@@ -422,6 +422,7 @@ M: Jerin Jacob <jerinj@marvell.com>
+ M: Nithin Dabilpuram <ndabilpuram@marvell.com>
+ M: Vamsi Attunuru <vattunuru@marvell.com>
+ F: drivers/common/octeontx2/
++F: drivers/mempool/octeontx2/
+ F: doc/guides/platform/img/octeontx2_*
+ F: doc/guides/platform/octeontx2.rst
+ 
+diff --git a/config/common_base b/config/common_base
+index d12ae98bc0cf..82cb527249d9 100644
+--- a/config/common_base
++++ b/config/common_base
+@@ -725,6 +725,11 @@ CONFIG_RTE_DRIVER_MEMPOOL_STACK=y
+ #
+ CONFIG_RTE_LIBRTE_OCTEONTX_MEMPOOL=y
+ 
++#
++# Compile PMD for octeontx2 npa mempool device
++#
++CONFIG_RTE_LIBRTE_OCTEONTX2_MEMPOOL=y
++
+ #
+ # Compile librte_mbuf
+ #
+diff --git a/drivers/common/Makefile b/drivers/common/Makefile
+index f37aded1e495..bc6f97232dc3 100644
+--- a/drivers/common/Makefile
++++ b/drivers/common/Makefile
+@@ -11,7 +11,10 @@ endif
+ ifeq ($(CONFIG_RTE_LIBRTE_PMD_OCTEONTX_SSOVF)$(CONFIG_RTE_LIBRTE_OCTEONTX_MEMPOOL),yy)
+ DIRS-y += octeontx
+ endif
++OCTEONTX2-y := $(CONFIG_RTE_LIBRTE_OCTEONTX2_MEMPOOL)
++ifeq ($(findstring y,$(OCTEONTX2-y)),y)
+ DIRS-y += octeontx2
++endif
+ 
+ MVEP-y := $(CONFIG_RTE_LIBRTE_MVPP2_PMD)
+ MVEP-y += $(CONFIG_RTE_LIBRTE_MVNETA_PMD)
+diff --git a/drivers/mempool/Makefile b/drivers/mempool/Makefile
+index 28c2e8360b91..29ef73bf445c 100644
+--- a/drivers/mempool/Makefile
++++ b/drivers/mempool/Makefile
+@@ -13,5 +13,6 @@ endif
+ DIRS-$(CONFIG_RTE_DRIVER_MEMPOOL_RING) += ring
+ DIRS-$(CONFIG_RTE_DRIVER_MEMPOOL_STACK) += stack
+ DIRS-$(CONFIG_RTE_LIBRTE_OCTEONTX_MEMPOOL) += octeontx
++DIRS-$(CONFIG_RTE_LIBRTE_OCTEONTX2_MEMPOOL) += octeontx2
+ 
+ include $(RTE_SDK)/mk/rte.subdir.mk
+diff --git a/drivers/mempool/meson.build b/drivers/mempool/meson.build
+index 4527d9806d69..7520e489f413 100644
+--- a/drivers/mempool/meson.build
++++ b/drivers/mempool/meson.build
+@@ -1,7 +1,7 @@
+ # SPDX-License-Identifier: BSD-3-Clause
+ # Copyright(c) 2017 Intel Corporation
+ 
+-drivers = ['bucket', 'dpaa', 'dpaa2', 'octeontx', 'ring', 'stack']
++drivers = ['bucket', 'dpaa', 'dpaa2', 'octeontx', 'octeontx2', 'ring', 'stack']
+ std_deps = ['mempool']
+ config_flag_fmt = 'RTE_LIBRTE_@0@_MEMPOOL'
+ driver_name_fmt = 'rte_mempool_@0@'
+diff --git a/drivers/mempool/octeontx2/Makefile b/drivers/mempool/octeontx2/Makefile
+new file mode 100644
+index 000000000000..6fbb6e291e37
+--- /dev/null
++++ b/drivers/mempool/octeontx2/Makefile
+@@ -0,0 +1,36 @@
++# SPDX-License-Identifier: BSD-3-Clause
++# Copyright(C) 2019 Marvell International Ltd.
++#
++
++include $(RTE_SDK)/mk/rte.vars.mk
++
++#
++# library name
++#
++LIB = librte_mempool_octeontx2.a
++
++CFLAGS += $(WERROR_FLAGS)
++CFLAGS += -I$(RTE_SDK)/drivers/common/octeontx2
++CFLAGS += -I$(RTE_SDK)/drivers/mempool/octeontx2
++CFLAGS += -I$(RTE_SDK)/drivers/bus/pci
++CFLAGS += -O3
++
++ifneq ($(CONFIG_RTE_ARCH_64),y)
++CFLAGS += -Wno-int-to-pointer-cast
++CFLAGS += -Wno-pointer-to-int-cast
++endif
++
++EXPORT_MAP := rte_mempool_octeontx2_version.map
++
++LIBABIVER := 1
++
++#
++# all source are stored in SRCS-y
++#
++SRCS-$(CONFIG_RTE_LIBRTE_OCTEONTX2_MEMPOOL) += \
++	otx2_mempool.c
++
++LDLIBS += -lrte_eal -lrte_mempool -lrte_mbuf
++LDLIBS += -lrte_common_octeontx2 -lrte_kvargs -lrte_bus_pci
++
++include $(RTE_SDK)/mk/rte.lib.mk
+diff --git a/drivers/mempool/octeontx2/meson.build b/drivers/mempool/octeontx2/meson.build
+new file mode 100644
+index 000000000000..ec3c59eefee1
+--- /dev/null
++++ b/drivers/mempool/octeontx2/meson.build
+@@ -0,0 +1,20 @@
++# SPDX-License-Identifier: BSD-3-Clause
++# Copyright(C) 2019 Marvell International Ltd.
++#
++
++sources = files('otx2_mempool.c',
++		)
++
++extra_flags = []
++# This integrated controller runs only on a arm64 machine, remove 32bit warnings
++if not dpdk_conf.get('RTE_ARCH_64')
++	extra_flags += ['-Wno-int-to-pointer-cast', '-Wno-pointer-to-int-cast']
++endif
++
++foreach flag: extra_flags
++	if cc.has_argument(flag)
++		cflags += flag
++	endif
++endforeach
++
++deps += ['eal', 'mbuf', 'kvargs', 'bus_pci', 'common_octeontx2', 'mempool']
+diff --git a/drivers/mempool/octeontx2/otx2_mempool.c b/drivers/mempool/octeontx2/otx2_mempool.c
+new file mode 100644
+index 000000000000..fd8e147f54b7
+--- /dev/null
++++ b/drivers/mempool/octeontx2/otx2_mempool.c
+@@ -0,0 +1,57 @@
++/* SPDX-License-Identifier: BSD-3-Clause
++ * Copyright(C) 2019 Marvell International Ltd.
++ */
++
++#include <rte_bus_pci.h>
++#include <rte_common.h>
++#include <rte_eal.h>
++#include <rte_pci.h>
++
++#include "otx2_common.h"
++
++static int
++npa_remove(struct rte_pci_device *pci_dev)
++{
++	if (rte_eal_process_type() != RTE_PROC_PRIMARY)
++		return 0;
++
++	RTE_SET_USED(pci_dev);
++	return 0;
++}
++
++static int
++npa_probe(struct rte_pci_driver *pci_drv, struct rte_pci_device *pci_dev)
++{
++	RTE_SET_USED(pci_drv);
++
++	if (rte_eal_process_type() != RTE_PROC_PRIMARY)
++		return 0;
++
++	RTE_SET_USED(pci_dev);
++	return 0;
++}
++
++static const struct rte_pci_id pci_npa_map[] = {
++	{
++		RTE_PCI_DEVICE(PCI_VENDOR_ID_CAVIUM,
++					PCI_DEVID_OCTEONTX2_RVU_NPA_PF)
++	},
++	{
++		RTE_PCI_DEVICE(PCI_VENDOR_ID_CAVIUM,
++					PCI_DEVID_OCTEONTX2_RVU_NPA_VF)
++	},
++	{
++		.vendor_id = 0,
++	},
++};
++
++static struct rte_pci_driver pci_npa = {
++	.id_table = pci_npa_map,
++	.drv_flags = RTE_PCI_DRV_NEED_MAPPING | RTE_PCI_DRV_IOVA_AS_VA,
++	.probe = npa_probe,
++	.remove = npa_remove,
++};
++
++RTE_PMD_REGISTER_PCI(mempool_octeontx2, pci_npa);
++RTE_PMD_REGISTER_PCI_TABLE(mempool_octeontx2, pci_npa_map);
++RTE_PMD_REGISTER_KMOD_DEP(mempool_octeontx2, "vfio-pci");
+diff --git a/drivers/mempool/octeontx2/rte_mempool_octeontx2_version.map b/drivers/mempool/octeontx2/rte_mempool_octeontx2_version.map
+new file mode 100644
+index 000000000000..9a61188cd520
+--- /dev/null
++++ b/drivers/mempool/octeontx2/rte_mempool_octeontx2_version.map
+@@ -0,0 +1,4 @@
++DPDK_19.08 {
++
++	local: *;
++};
+diff --git a/mk/rte.app.mk b/mk/rte.app.mk
+index a83feeaa03ba..5cb93e00f908 100644
+--- a/mk/rte.app.mk
++++ b/mk/rte.app.mk
+@@ -88,6 +88,7 @@ _LDLIBS-$(CONFIG_RTE_LIBRTE_RAWDEV)         += -lrte_rawdev
+ _LDLIBS-$(CONFIG_RTE_LIBRTE_TIMER)          += -lrte_timer
+ _LDLIBS-$(CONFIG_RTE_LIBRTE_MEMPOOL)        += -lrte_mempool
+ _LDLIBS-$(CONFIG_RTE_DRIVER_MEMPOOL_RING)   += -lrte_mempool_ring
++_LDLIBS-$(CONFIG_RTE_LIBRTE_OCTEONTX2_MEMPOOL) += -lrte_mempool_octeontx2
+ _LDLIBS-$(CONFIG_RTE_LIBRTE_RING)           += -lrte_ring
+ _LDLIBS-$(CONFIG_RTE_LIBRTE_PCI)            += -lrte_pci
+ _LDLIBS-$(CONFIG_RTE_LIBRTE_EAL)            += -lrte_eal
+@@ -106,7 +107,10 @@ endif
+ ifeq ($(CONFIG_RTE_LIBRTE_PMD_OCTEONTX_SSOVF)$(CONFIG_RTE_LIBRTE_OCTEONTX_MEMPOOL),yy)
+ _LDLIBS-y += -lrte_common_octeontx
+ endif
++OCTEONTX2-y := $(CONFIG_RTE_LIBRTE_OCTEONTX2_MEMPOOL)
++ifeq ($(findstring y,$(OCTEONTX2-y)),y)
+ _LDLIBS-y += -lrte_common_octeontx2
++endif
+ 
+ MVEP-y := $(CONFIG_RTE_LIBRTE_MVPP2_PMD)
+ MVEP-y += $(CONFIG_RTE_LIBRTE_MVNETA_PMD)
+-- 
+2.14.4
+

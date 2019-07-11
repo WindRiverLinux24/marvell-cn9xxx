@@ -1,0 +1,281 @@
+From fc4d78dc81e35dd1c4c411ec67f6ab1d76bb3388 Mon Sep 17 00:00:00 2001
+From: Vamsi Attunuru <vattunuru@marvell.com>
+Date: Wed, 29 May 2019 13:35:08 +0530
+Subject: [PATCH 093/154] net/octeontx2: add link stats operations
+
+Add link stats related operations and mark respective
+items in the documentation.
+
+Signed-off-by: Vamsi Attunuru <vattunuru@marvell.com>
+Signed-off-by: Nithin Dabilpuram <ndabilpuram@marvell.com>
+---
+ doc/guides/nics/features/octeontx2.ini     |   2 +
+ doc/guides/nics/features/octeontx2_vec.ini |   2 +
+ doc/guides/nics/features/octeontx2_vf.ini  |   2 +
+ doc/guides/nics/octeontx2.rst              |   1 +
+ drivers/net/octeontx2/Makefile             |   1 +
+ drivers/net/octeontx2/meson.build          |   1 +
+ drivers/net/octeontx2/otx2_ethdev.c        |   8 +++
+ drivers/net/octeontx2/otx2_ethdev.h        |   8 +++
+ drivers/net/octeontx2/otx2_link.c          | 108 +++++++++++++++++++++++++++++
+ 9 files changed, 133 insertions(+)
+ create mode 100644 drivers/net/octeontx2/otx2_link.c
+
+diff --git a/doc/guides/nics/features/octeontx2.ini b/doc/guides/nics/features/octeontx2.ini
+index 7d53bf0e7de3..828351409ebf 100644
+--- a/doc/guides/nics/features/octeontx2.ini
++++ b/doc/guides/nics/features/octeontx2.ini
+@@ -8,6 +8,8 @@ Speed capabilities   = Y
+ Lock-free Tx queue   = Y
+ SR-IOV               = Y
+ Multiprocess aware   = Y
++Link status          = Y
++Link status event    = Y
+ Registers dump       = Y
+ Linux VFIO           = Y
+ ARMv8                = Y
+diff --git a/doc/guides/nics/features/octeontx2_vec.ini b/doc/guides/nics/features/octeontx2_vec.ini
+index e0cc7b22de8b..719692dc6854 100644
+--- a/doc/guides/nics/features/octeontx2_vec.ini
++++ b/doc/guides/nics/features/octeontx2_vec.ini
+@@ -8,6 +8,8 @@ Speed capabilities   = Y
+ Lock-free Tx queue   = Y
+ SR-IOV               = Y
+ Multiprocess aware   = Y
++Link status          = Y
++Link status event    = Y
+ Registers dump       = Y
+ Linux VFIO           = Y
+ ARMv8                = Y
+diff --git a/doc/guides/nics/features/octeontx2_vf.ini b/doc/guides/nics/features/octeontx2_vf.ini
+index 6dfdf88c6544..4d5667583f64 100644
+--- a/doc/guides/nics/features/octeontx2_vf.ini
++++ b/doc/guides/nics/features/octeontx2_vf.ini
+@@ -7,6 +7,8 @@
+ Speed capabilities   = Y
+ Lock-free Tx queue   = Y
+ Multiprocess aware   = Y
++Link status          = Y
++Link status event    = Y
+ Registers dump       = Y
+ Linux VFIO           = Y
+ ARMv8                = Y
+diff --git a/doc/guides/nics/octeontx2.rst b/doc/guides/nics/octeontx2.rst
+index 75d5746e8ef4..a163f912822b 100644
+--- a/doc/guides/nics/octeontx2.rst
++++ b/doc/guides/nics/octeontx2.rst
+@@ -18,6 +18,7 @@ Features of the OCTEON TX2 Ethdev PMD are:
+ 
+ - SR-IOV VF
+ - Lock-free Tx queue
++- Link state information
+ - Debug utilities - Context dump and error interrupt support
+ 
+ Prerequisites
+diff --git a/drivers/net/octeontx2/Makefile b/drivers/net/octeontx2/Makefile
+index 12ed24b2d185..9d482d72de6f 100644
+--- a/drivers/net/octeontx2/Makefile
++++ b/drivers/net/octeontx2/Makefile
+@@ -32,6 +32,7 @@ LIBABIVER := 1
+ #
+ SRCS-$(CONFIG_RTE_LIBRTE_OCTEONTX2_PMD) += \
+ 	otx2_mac.c	\
++	otx2_link.c	\
+ 	otx2_ethdev.c	\
+ 	otx2_ethdev_irq.c \
+ 	otx2_ethdev_ops.c \
+diff --git a/drivers/net/octeontx2/meson.build b/drivers/net/octeontx2/meson.build
+index a06e1192c6d6..d693386b923c 100644
+--- a/drivers/net/octeontx2/meson.build
++++ b/drivers/net/octeontx2/meson.build
+@@ -4,6 +4,7 @@
+ 
+ sources = files(
+ 		'otx2_mac.c',
++		'otx2_link.c',
+ 		'otx2_ethdev.c',
+ 		'otx2_ethdev_irq.c',
+ 		'otx2_ethdev_ops.c',
+diff --git a/drivers/net/octeontx2/otx2_ethdev.c b/drivers/net/octeontx2/otx2_ethdev.c
+index 48d5a15d6949..cb4f6ebb977c 100644
+--- a/drivers/net/octeontx2/otx2_ethdev.c
++++ b/drivers/net/octeontx2/otx2_ethdev.c
+@@ -39,6 +39,10 @@ nix_get_tx_offload_capa(struct otx2_eth_dev *dev)
+ 	return NIX_TX_OFFLOAD_CAPA;
+ }
+ 
++static const struct otx2_dev_ops otx2_dev_ops = {
++	.link_status_update = otx2_eth_dev_link_status_update,
++};
++
+ static int
+ nix_lf_alloc(struct otx2_eth_dev *dev, uint32_t nb_rxq, uint32_t nb_txq)
+ {
+@@ -229,6 +233,7 @@ otx2_nix_configure(struct rte_eth_dev *eth_dev)
+ static const struct eth_dev_ops otx2_eth_dev_ops = {
+ 	.dev_infos_get            = otx2_nix_info_get,
+ 	.dev_configure            = otx2_nix_configure,
++	.link_update              = otx2_nix_link_update,
+ 	.get_reg                  = otx2_nix_dev_get_reg,
+ };
+ 
+@@ -324,6 +329,9 @@ otx2_eth_dev_init(struct rte_eth_dev *eth_dev)
+ 			goto error;
+ 		}
+ 	}
++	/* Device generic callbacks */
++	dev->ops = &otx2_dev_ops;
++	dev->eth_dev = eth_dev;
+ 
+ 	/* Grab the NPA LF if required */
+ 	rc = otx2_npa_lf_init(pci_dev, dev);
+diff --git a/drivers/net/octeontx2/otx2_ethdev.h b/drivers/net/octeontx2/otx2_ethdev.h
+index 7313689b0ad5..d8490337da1f 100644
+--- a/drivers/net/octeontx2/otx2_ethdev.h
++++ b/drivers/net/octeontx2/otx2_ethdev.h
+@@ -136,6 +136,7 @@ struct otx2_eth_dev {
+ 	uint8_t max_mac_entries;
+ 	uint8_t lf_tx_stats;
+ 	uint8_t lf_rx_stats;
++	uint16_t flags;
+ 	uint16_t cints;
+ 	uint16_t qints;
+ 	uint8_t configured;
+@@ -156,6 +157,7 @@ struct otx2_eth_dev {
+ 	struct otx2_qint qints_mem[RTE_MAX_QUEUES_PER_PORT];
+ 	struct otx2_rss_info rss_info;
+ 	struct otx2_npc_flow_info npc_flow;
++	struct rte_eth_dev *eth_dev;
+ } __rte_cache_aligned;
+ 
+ static inline struct otx2_eth_dev *
+@@ -168,6 +170,12 @@ otx2_eth_pmd_priv(struct rte_eth_dev *eth_dev)
+ void otx2_nix_info_get(struct rte_eth_dev *eth_dev,
+ 		       struct rte_eth_dev_info *dev_info);
+ 
++/* Link */
++void otx2_nix_toggle_flag_link_cfg(struct otx2_eth_dev *dev, bool set);
++int otx2_nix_link_update(struct rte_eth_dev *eth_dev, int wait_to_complete);
++void otx2_eth_dev_link_status_update(struct otx2_dev *dev,
++				     struct cgx_link_user_info *link);
++
+ /* IRQ */
+ int otx2_nix_register_irqs(struct rte_eth_dev *eth_dev);
+ int oxt2_nix_register_queue_irqs(struct rte_eth_dev *eth_dev);
+diff --git a/drivers/net/octeontx2/otx2_link.c b/drivers/net/octeontx2/otx2_link.c
+new file mode 100644
+index 000000000000..228a0cd8e3be
+--- /dev/null
++++ b/drivers/net/octeontx2/otx2_link.c
+@@ -0,0 +1,108 @@
++/* SPDX-License-Identifier: BSD-3-Clause
++ * Copyright(C) 2019 Marvell International Ltd.
++ */
++
++#include <rte_common.h>
++#include <rte_ethdev_pci.h>
++
++#include "otx2_ethdev.h"
++
++void
++otx2_nix_toggle_flag_link_cfg(struct otx2_eth_dev *dev, bool set)
++{
++	if (set)
++		dev->flags |= OTX2_LINK_CFG_IN_PROGRESS_F;
++	else
++		dev->flags &= ~OTX2_LINK_CFG_IN_PROGRESS_F;
++
++	rte_wmb();
++}
++
++static inline int
++nix_wait_for_link_cfg(struct otx2_eth_dev *dev)
++{
++	uint16_t wait = 1000;
++
++	do {
++		rte_rmb();
++		if (!(dev->flags & OTX2_LINK_CFG_IN_PROGRESS_F))
++			break;
++		wait--;
++		rte_delay_ms(1);
++	} while (wait);
++
++	return wait ? 0 : -1;
++}
++
++static void
++nix_link_status_print(struct rte_eth_dev *eth_dev, struct rte_eth_link *link)
++{
++	if (link && link->link_status)
++		otx2_info("Port %d: Link Up - speed %u Mbps - %s",
++			  (int)(eth_dev->data->port_id),
++			  (uint32_t)link->link_speed,
++			  link->link_duplex == ETH_LINK_FULL_DUPLEX ?
++			  "full-duplex" : "half-duplex");
++	else
++		otx2_info("Port %d: Link Down", (int)(eth_dev->data->port_id));
++}
++
++void
++otx2_eth_dev_link_status_update(struct otx2_dev *dev,
++				struct cgx_link_user_info *link)
++{
++	struct otx2_eth_dev *otx2_dev = (struct otx2_eth_dev *)dev;
++	struct rte_eth_dev *eth_dev = otx2_dev->eth_dev;
++	struct rte_eth_link eth_link;
++
++	if (!link || !dev || !eth_dev->data->dev_conf.intr_conf.lsc)
++		return;
++
++	if (nix_wait_for_link_cfg(otx2_dev)) {
++		otx2_err("Timeout waiting for link_cfg to complete");
++		return;
++	}
++
++	eth_link.link_status = link->link_up;
++	eth_link.link_speed = link->speed;
++	eth_link.link_autoneg = ETH_LINK_AUTONEG;
++	eth_link.link_duplex = link->full_duplex;
++
++	/* Print link info */
++	nix_link_status_print(eth_dev, &eth_link);
++
++	/* Update link info */
++	rte_eth_linkstatus_set(eth_dev, &eth_link);
++
++	/* Set the flag and execute application callbacks */
++	_rte_eth_dev_callback_process(eth_dev, RTE_ETH_EVENT_INTR_LSC, NULL);
++}
++
++int
++otx2_nix_link_update(struct rte_eth_dev *eth_dev, int wait_to_complete)
++{
++	struct otx2_eth_dev *dev = otx2_eth_pmd_priv(eth_dev);
++	struct otx2_mbox *mbox = dev->mbox;
++	struct cgx_link_info_msg *rsp;
++	struct rte_eth_link link;
++	int rc;
++
++	RTE_SET_USED(wait_to_complete);
++
++	if (otx2_dev_is_lbk(dev))
++		return 0;
++
++	otx2_mbox_alloc_msg_cgx_get_linkinfo(mbox);
++	rc = otx2_mbox_process_msg(mbox, (void *)&rsp);
++	if (rc)
++		return rc;
++
++	link.link_status = rsp->link_info.link_up;
++	link.link_speed = rsp->link_info.speed;
++	link.link_autoneg = ETH_LINK_AUTONEG;
++
++	if (rsp->link_info.full_duplex)
++		link.link_duplex = rsp->link_info.full_duplex;
++
++	return rte_eth_linkstatus_set(eth_dev, &link);
++}
+-- 
+2.14.4
+

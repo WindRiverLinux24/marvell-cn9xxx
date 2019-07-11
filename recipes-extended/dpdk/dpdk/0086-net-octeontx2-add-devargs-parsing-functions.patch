@@ -1,0 +1,407 @@
+From 7982ea3858bdf6cea2dac41e942a49bc31cb176a Mon Sep 17 00:00:00 2001
+From: Jerin Jacob <jerinj@marvell.com>
+Date: Tue, 28 May 2019 19:32:32 +0530
+Subject: [PATCH 086/154] net/octeontx2: add devargs parsing functions
+
+add various devargs command line options supported by this driver.
+
+Signed-off-by: Jerin Jacob <jerinj@marvell.com>
+Signed-off-by: Nithin Dabilpuram <ndabilpuram@marvell.com>
+Signed-off-by: Pavan Nikhilesh <pbhagavatula@marvell.com>
+Signed-off-by: Kiran Kumar K <kirankumark@marvell.com>
+Signed-off-by: Vamsi Attunuru <vattunuru@marvell.com>
+---
+ doc/guides/nics/octeontx2.rst               |  67 +++++++++++
+ drivers/net/octeontx2/Makefile              |   5 +-
+ drivers/net/octeontx2/meson.build           |   1 +
+ drivers/net/octeontx2/otx2_ethdev.c         |   7 ++
+ drivers/net/octeontx2/otx2_ethdev.h         |  23 ++++
+ drivers/net/octeontx2/otx2_ethdev_devargs.c | 165 ++++++++++++++++++++++++++++
+ drivers/net/octeontx2/otx2_rx.h             |  10 ++
+ 7 files changed, 276 insertions(+), 2 deletions(-)
+ create mode 100644 drivers/net/octeontx2/otx2_ethdev_devargs.c
+ create mode 100644 drivers/net/octeontx2/otx2_rx.h
+
+diff --git a/doc/guides/nics/octeontx2.rst b/doc/guides/nics/octeontx2.rst
+index f0bd36be3a45..92a7ebc424a7 100644
+--- a/doc/guides/nics/octeontx2.rst
++++ b/doc/guides/nics/octeontx2.rst
+@@ -30,3 +30,70 @@ The following options may be modified in the ``config`` file.
+ - ``CONFIG_RTE_LIBRTE_OCTEONTX2_PMD`` (default ``y``)
+ 
+   Toggle compilation of the ``librte_pmd_octeontx2`` driver.
++
++Runtime Config Options
++----------------------
++
++- ``HW offload ptype parsing disable`` (default ``0``)
++
++   Packet type parsing is HW offloaded by default and this feature may be toggled
++   using ``ptype_disable`` ``devargs`` parameter.
++
++- ``Rx&Tx scalar mode enable`` (default ``0``)
++
++   Ethdev supports both scalar and vector mode, it may be selected at runtime
++   using ``scalar_enable`` ``devargs`` parameter.
++
++- ``RSS reta size`` (default ``64``)
++
++   RSS redirection table size may be configured during runtime using ``reta_size``
++   ``devargs`` parameter.
++
++   For example::
++
++      -w 0002:02:00.0,reta_size=256
++
++   With the above configuration, reta table of size 256 is populated.
++
++- ``Flow priority levels`` (default ``3``)
++
++   RTE Flow priority levels can be configured during runtime using
++   ``flow_max_priority`` ``devargs`` parameter.
++
++   For example::
++
++      -w 0002:02:00.0,flow_max_priority=10
++
++   With the above configuration, priority level was set to 10 (0-9). Max
++   priority level supported is 32.
++
++- ``Reserve Flow entries`` (default ``8``)
++
++   RTE flow entries can be pre allocated and the size of pre allocation can be
++   selected runtime using ``flow_prealloc_size`` ``devargs`` parameter.
++
++   For example::
++
++      -w 0002:02:00.0,flow_prealloc_size=4
++
++   With the above configuration, pre alloc size was set to 4. Max pre alloc
++   size supported is 32.
++
++- ``Max SQB buffer count`` (default ``512``)
++
++   Send queue descriptor buffer count may be limited during runtime using
++   ``max_sqb_count`` ``devargs`` parameter.
++
++   For example::
++
++      -w 0002:02:00.0,max_sqb_count=64
++
++   With the above configuration, each send queue's decscriptor buffer count is
++   limited to a maximum of 64 buffers.
++
++
++.. note::
++
++   Above devarg parameters are configurable per device, user needs to pass the
++   parameters to all the PCIe devices if application requires to configure on
++   all the ethdev ports.
+diff --git a/drivers/net/octeontx2/Makefile b/drivers/net/octeontx2/Makefile
+index e3c06f12d15d..d6672844ada6 100644
+--- a/drivers/net/octeontx2/Makefile
++++ b/drivers/net/octeontx2/Makefile
+@@ -32,9 +32,10 @@ LIBABIVER := 1
+ #
+ SRCS-$(CONFIG_RTE_LIBRTE_OCTEONTX2_PMD) += \
+ 	otx2_mac.c	\
+-	otx2_ethdev.c
++	otx2_ethdev.c	\
++	otx2_ethdev_devargs.c
+ 
+ LDLIBS += -lrte_common_octeontx2 -lrte_mempool_octeontx2 -lrte_eal
+-LDLIBS += -lrte_ethdev -lrte_bus_pci
++LDLIBS += -lrte_ethdev -lrte_bus_pci -lrte_kvargs
+ 
+ include $(RTE_SDK)/mk/rte.lib.mk
+diff --git a/drivers/net/octeontx2/meson.build b/drivers/net/octeontx2/meson.build
+index b153f166de05..b5c6fb97876e 100644
+--- a/drivers/net/octeontx2/meson.build
++++ b/drivers/net/octeontx2/meson.build
+@@ -5,6 +5,7 @@
+ sources = files(
+ 		'otx2_mac.c',
+ 		'otx2_ethdev.c',
++		'otx2_ethdev_devargs.c'
+ 		)
+ 
+ deps += ['bus_pci', 'common_octeontx2', 'mempool_octeontx2']
+diff --git a/drivers/net/octeontx2/otx2_ethdev.c b/drivers/net/octeontx2/otx2_ethdev.c
+index 08f03b4c3740..eeba0c2c6d57 100644
+--- a/drivers/net/octeontx2/otx2_ethdev.c
++++ b/drivers/net/octeontx2/otx2_ethdev.c
+@@ -137,6 +137,13 @@ otx2_eth_dev_init(struct rte_eth_dev *eth_dev)
+ 	memset(&dev->otx2_eth_dev_data_start, 0, sizeof(*dev) -
+ 		offsetof(struct otx2_eth_dev, otx2_eth_dev_data_start));
+ 
++	/* Parse devargs string */
++	rc = otx2_ethdev_parse_devargs(eth_dev->device->devargs, dev);
++	if (rc) {
++		otx2_err("Failed to parse devargs rc=%d", rc);
++		goto error;
++	}
++
+ 	if (!dev->mbox_active) {
+ 		/* Initialize the base otx2_dev object
+ 		 * only if already present
+diff --git a/drivers/net/octeontx2/otx2_ethdev.h b/drivers/net/octeontx2/otx2_ethdev.h
+index d9f72686a3f4..a836883921da 100644
+--- a/drivers/net/octeontx2/otx2_ethdev.h
++++ b/drivers/net/octeontx2/otx2_ethdev.h
+@@ -9,11 +9,13 @@
+ 
+ #include <rte_common.h>
+ #include <rte_ethdev.h>
++#include <rte_kvargs.h>
+ 
+ #include "otx2_common.h"
+ #include "otx2_dev.h"
+ #include "otx2_irq.h"
+ #include "otx2_mempool.h"
++#include "otx2_rx.h"
+ 
+ #define OTX2_ETH_DEV_PMD_VERSION	"1.0"
+ 
+@@ -31,6 +33,10 @@
+ /* Used for struct otx2_eth_dev::flags */
+ #define OTX2_LINK_CFG_IN_PROGRESS_F	BIT_ULL(0)
+ 
++#define NIX_MAX_SQB			512
++#define NIX_MIN_SQB			32
++#define NIX_RSS_RETA_SIZE		64
++
+ #define NIX_TX_OFFLOAD_CAPA ( \
+ 	DEV_TX_OFFLOAD_MBUF_FAST_FREE	| \
+ 	DEV_TX_OFFLOAD_MT_LOCKFREE	| \
+@@ -56,6 +62,15 @@
+ 	DEV_RX_OFFLOAD_QINQ_STRIP | \
+ 	DEV_RX_OFFLOAD_TIMESTAMP)
+ 
++struct otx2_rss_info {
++	uint16_t rss_size;
++};
++
++struct otx2_npc_flow_info {
++	uint16_t flow_prealloc_size;
++	uint16_t flow_max_priority;
++};
++
+ struct otx2_eth_dev {
+ 	OTX2_DEV; /* Base class */
+ 	MARKER otx2_eth_dev_data_start;
+@@ -72,12 +87,16 @@ struct otx2_eth_dev {
+ 	uint16_t nix_msixoff;
+ 	uintptr_t base;
+ 	uintptr_t lmt_addr;
++	uint16_t scalar_ena;
++	uint16_t max_sqb_count;
+ 	uint16_t rx_offload_flags; /* Selected Rx offload flags(NIX_RX_*_F) */
+ 	uint64_t rx_offloads;
+ 	uint16_t tx_offload_flags; /* Selected Tx offload flags(NIX_TX_*_F) */
+ 	uint64_t tx_offloads;
+ 	uint64_t rx_offload_capa;
+ 	uint64_t tx_offload_capa;
++	struct otx2_rss_info rss_info;
++	struct otx2_npc_flow_info npc_flow;
+ } __rte_cache_aligned;
+ 
+ static inline struct otx2_eth_dev *
+@@ -96,4 +115,8 @@ int otx2_cgx_mac_addr_set(struct rte_eth_dev *eth_dev,
+ int otx2_nix_mac_addr_get(struct rte_eth_dev *eth_dev, uint8_t *addr);
+ int otx2_cgx_mac_max_entries_get(struct otx2_eth_dev *dev);
+ 
++/* Devargs */
++int otx2_ethdev_parse_devargs(struct rte_devargs *devargs,
++			      struct otx2_eth_dev *dev);
++
+ #endif /* __OTX2_ETHDEV_H__ */
+diff --git a/drivers/net/octeontx2/otx2_ethdev_devargs.c b/drivers/net/octeontx2/otx2_ethdev_devargs.c
+new file mode 100644
+index 000000000000..85e7e312a88c
+--- /dev/null
++++ b/drivers/net/octeontx2/otx2_ethdev_devargs.c
+@@ -0,0 +1,165 @@
++/* SPDX-License-Identifier: BSD-3-Clause
++ * Copyright(C) 2019 Marvell International Ltd.
++ */
++
++#include <inttypes.h>
++#include <math.h>
++
++#include "otx2_ethdev.h"
++
++static int
++parse_flow_max_priority(const char *key, const char *value, void *extra_args)
++{
++	RTE_SET_USED(key);
++	uint16_t val;
++
++	val = atoi(value);
++
++	/* Limit the max priority to 32 */
++	if (val < 1 || val > 32)
++		return -EINVAL;
++
++	*(uint16_t *)extra_args = val;
++
++	return 0;
++}
++
++static int
++parse_flow_prealloc_size(const char *key, const char *value, void *extra_args)
++{
++	RTE_SET_USED(key);
++	uint16_t val;
++
++	val = atoi(value);
++
++	/* Limit the prealloc size to 32 */
++	if (val < 1 || val > 32)
++		return -EINVAL;
++
++	*(uint16_t *)extra_args = val;
++
++	return 0;
++}
++
++static int
++parse_reta_size(const char *key, const char *value, void *extra_args)
++{
++	RTE_SET_USED(key);
++	uint32_t val;
++
++	val = atoi(value);
++
++	if (val <= ETH_RSS_RETA_SIZE_64)
++		val = ETH_RSS_RETA_SIZE_64;
++	else if (val > ETH_RSS_RETA_SIZE_64 && val <= ETH_RSS_RETA_SIZE_128)
++		val = ETH_RSS_RETA_SIZE_128;
++	else if (val > ETH_RSS_RETA_SIZE_128 && val <= ETH_RSS_RETA_SIZE_256)
++		val = ETH_RSS_RETA_SIZE_256;
++	else
++		val = NIX_RSS_RETA_SIZE;
++
++	*(uint16_t *)extra_args = val;
++
++	return 0;
++}
++
++static int
++parse_ptype_flag(const char *key, const char *value, void *extra_args)
++{
++	RTE_SET_USED(key);
++	uint32_t val;
++
++	val = atoi(value);
++	if (val)
++		val = 0; /* Disable NIX_RX_OFFLOAD_PTYPE_F */
++
++	*(uint16_t *)extra_args = val;
++
++	return 0;
++}
++
++static int
++parse_flag(const char *key, const char *value, void *extra_args)
++{
++	RTE_SET_USED(key);
++
++	*(uint16_t *)extra_args = atoi(value);
++
++	return 0;
++}
++
++static int
++parse_sqb_count(const char *key, const char *value, void *extra_args)
++{
++	RTE_SET_USED(key);
++	uint32_t val;
++
++	val = atoi(value);
++
++	if (val < NIX_MIN_SQB || val > NIX_MAX_SQB)
++		return -EINVAL;
++
++	*(uint16_t *)extra_args = val;
++
++	return 0;
++}
++
++#define OTX2_RSS_RETA_SIZE "reta_size"
++#define OTX2_PTYPE_DISABLE "ptype_disable"
++#define OTX2_SCL_ENABLE "scalar_enable"
++#define OTX2_MAX_SQB_COUNT "max_sqb_count"
++#define OTX2_FLOW_PREALLOC_SIZE "flow_prealloc_size"
++#define OTX2_FLOW_MAX_PRIORITY "flow_max_priority"
++
++int
++otx2_ethdev_parse_devargs(struct rte_devargs *devargs, struct otx2_eth_dev *dev)
++{
++	uint16_t offload_flag = NIX_RX_OFFLOAD_PTYPE_F;
++	uint16_t rss_size = NIX_RSS_RETA_SIZE;
++	uint16_t sqb_count = NIX_MAX_SQB;
++	uint16_t flow_prealloc_size = 8;
++	uint16_t flow_max_priority = 3;
++	uint16_t scalar_enable = 0;
++	struct rte_kvargs *kvlist;
++
++	if (devargs == NULL)
++		goto null_devargs;
++
++	kvlist = rte_kvargs_parse(devargs->args, NULL);
++	if (kvlist == NULL)
++		goto exit;
++
++	rte_kvargs_process(kvlist, OTX2_PTYPE_DISABLE,
++			   &parse_ptype_flag, &offload_flag);
++	rte_kvargs_process(kvlist, OTX2_RSS_RETA_SIZE,
++			   &parse_reta_size, &rss_size);
++	rte_kvargs_process(kvlist, OTX2_SCL_ENABLE,
++			   &parse_flag, &scalar_enable);
++	rte_kvargs_process(kvlist, OTX2_MAX_SQB_COUNT,
++			   &parse_sqb_count, &sqb_count);
++	rte_kvargs_process(kvlist, OTX2_FLOW_PREALLOC_SIZE,
++			   &parse_flow_prealloc_size, &flow_prealloc_size);
++	rte_kvargs_process(kvlist, OTX2_FLOW_MAX_PRIORITY,
++			   &parse_flow_max_priority, &flow_max_priority);
++	rte_kvargs_free(kvlist);
++
++null_devargs:
++	dev->rx_offload_flags = offload_flag;
++	dev->scalar_ena = scalar_enable;
++	dev->max_sqb_count = sqb_count;
++	dev->rss_info.rss_size = rss_size;
++	dev->npc_flow.flow_prealloc_size = flow_prealloc_size;
++	dev->npc_flow.flow_max_priority = flow_max_priority;
++	return 0;
++
++exit:
++	return -EINVAL;
++}
++
++RTE_PMD_REGISTER_PARAM_STRING(net_octeontx2,
++			      OTX2_RSS_RETA_SIZE "=<64|128|256>"
++			      OTX2_PTYPE_DISABLE "=1"
++			      OTX2_SCL_ENABLE "=1"
++			      OTX2_MAX_SQB_COUNT "=<32-512>"
++			      OTX2_FLOW_PREALLOC_SIZE "=<1-32>"
++			      OTX2_FLOW_MAX_PRIORITY "=<1-32>");
+diff --git a/drivers/net/octeontx2/otx2_rx.h b/drivers/net/octeontx2/otx2_rx.h
+new file mode 100644
+index 000000000000..1749c43ff070
+--- /dev/null
++++ b/drivers/net/octeontx2/otx2_rx.h
+@@ -0,0 +1,10 @@
++/* SPDX-License-Identifier: BSD-3-Clause
++ * Copyright(C) 2019 Marvell International Ltd.
++ */
++
++#ifndef __OTX2_RX_H__
++#define __OTX2_RX_H__
++
++#define NIX_RX_OFFLOAD_PTYPE_F         BIT(1)
++
++#endif /* __OTX2_RX_H__ */
+-- 
+2.14.4
+

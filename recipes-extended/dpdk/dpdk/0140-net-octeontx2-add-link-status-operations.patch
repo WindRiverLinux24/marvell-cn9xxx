@@ -1,0 +1,101 @@
+From 5018dc62ec0083444745926cfce1a529419275cc Mon Sep 17 00:00:00 2001
+From: Vamsi Attunuru <vattunuru@marvell.com>
+Date: Wed, 3 Jul 2019 14:01:50 +0530
+Subject: [PATCH 140/154] net/octeontx2: add link status operations
+
+Add support for setting the link up and down.
+
+Signed-off-by: Vamsi Attunuru <vattunuru@marvell.com>
+Signed-off-by: Nithin Dabilpuram <ndabilpuram@marvell.com>
+---
+ drivers/net/octeontx2/otx2_ethdev.c |  2 ++
+ drivers/net/octeontx2/otx2_ethdev.h |  2 ++
+ drivers/net/octeontx2/otx2_link.c   | 49 +++++++++++++++++++++++++++++++++++++
+ 3 files changed, 53 insertions(+)
+
+diff --git a/drivers/net/octeontx2/otx2_ethdev.c b/drivers/net/octeontx2/otx2_ethdev.c
+index b5b5e63f7226..156e7d34f809 100644
+--- a/drivers/net/octeontx2/otx2_ethdev.c
++++ b/drivers/net/octeontx2/otx2_ethdev.c
+@@ -1572,6 +1572,8 @@ static const struct eth_dev_ops otx2_eth_dev_ops = {
+ 	.tx_queue_stop            = otx2_nix_tx_queue_stop,
+ 	.rx_queue_start           = otx2_nix_rx_queue_start,
+ 	.rx_queue_stop            = otx2_nix_rx_queue_stop,
++	.dev_set_link_up          = otx2_nix_dev_set_link_up,
++	.dev_set_link_down        = otx2_nix_dev_set_link_down,
+ 	.dev_supported_ptypes_get = otx2_nix_supported_ptypes_get,
+ 	.dev_reset                = otx2_nix_dev_reset,
+ 	.stats_get                = otx2_nix_dev_stats_get,
+diff --git a/drivers/net/octeontx2/otx2_ethdev.h b/drivers/net/octeontx2/otx2_ethdev.h
+index f6905db83d76..863d4877ffd9 100644
+--- a/drivers/net/octeontx2/otx2_ethdev.h
++++ b/drivers/net/octeontx2/otx2_ethdev.h
+@@ -389,6 +389,8 @@ void otx2_nix_toggle_flag_link_cfg(struct otx2_eth_dev *dev, bool set);
+ int otx2_nix_link_update(struct rte_eth_dev *eth_dev, int wait_to_complete);
+ void otx2_eth_dev_link_status_update(struct otx2_dev *dev,
+ 				     struct cgx_link_user_info *link);
++int otx2_nix_dev_set_link_up(struct rte_eth_dev *eth_dev);
++int otx2_nix_dev_set_link_down(struct rte_eth_dev *eth_dev);
+ 
+ /* IRQ */
+ int otx2_nix_register_irqs(struct rte_eth_dev *eth_dev);
+diff --git a/drivers/net/octeontx2/otx2_link.c b/drivers/net/octeontx2/otx2_link.c
+index 228a0cd8e3be..8fcbdc9b7c0a 100644
+--- a/drivers/net/octeontx2/otx2_link.c
++++ b/drivers/net/octeontx2/otx2_link.c
+@@ -106,3 +106,52 @@ otx2_nix_link_update(struct rte_eth_dev *eth_dev, int wait_to_complete)
+ 
+ 	return rte_eth_linkstatus_set(eth_dev, &link);
+ }
++
++static int
++nix_dev_set_link_state(struct rte_eth_dev *eth_dev, uint8_t enable)
++{
++	struct otx2_eth_dev *dev = otx2_eth_pmd_priv(eth_dev);
++	struct otx2_mbox *mbox = dev->mbox;
++	struct cgx_set_link_state_msg *req;
++
++	req = otx2_mbox_alloc_msg_cgx_set_link_state(mbox);
++	req->enable = enable;
++	return otx2_mbox_process(mbox);
++}
++
++int
++otx2_nix_dev_set_link_up(struct rte_eth_dev *eth_dev)
++{
++	struct otx2_eth_dev *dev = otx2_eth_pmd_priv(eth_dev);
++	int rc, i;
++
++	if (otx2_dev_is_vf(dev))
++		return -ENOTSUP;
++
++	rc = nix_dev_set_link_state(eth_dev, 1);
++	if (rc)
++		goto done;
++
++	/* Start tx queues  */
++	for (i = 0; i < eth_dev->data->nb_tx_queues; i++)
++		otx2_nix_tx_queue_start(eth_dev, i);
++
++done:
++	return rc;
++}
++
++int
++otx2_nix_dev_set_link_down(struct rte_eth_dev *eth_dev)
++{
++	struct otx2_eth_dev *dev = otx2_eth_pmd_priv(eth_dev);
++	int i;
++
++	if (otx2_dev_is_vf(dev))
++		return -ENOTSUP;
++
++	/* Stop tx queues  */
++	for (i = 0; i < eth_dev->data->nb_tx_queues; i++)
++		otx2_nix_tx_queue_stop(eth_dev, i);
++
++	return nix_dev_set_link_state(eth_dev, 0);
++}
+-- 
+2.14.4
+

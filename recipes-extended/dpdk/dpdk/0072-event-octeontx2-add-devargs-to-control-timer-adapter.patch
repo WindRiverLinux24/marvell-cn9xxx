@@ -1,0 +1,191 @@
+From 4b1daa6e1d4d1aa8ed7fd937b7c3de0d21de43a9 Mon Sep 17 00:00:00 2001
+From: Pavan Nikhilesh <pbhagavatula@marvell.com>
+Date: Fri, 28 Jun 2019 23:53:53 +0530
+Subject: [PATCH 072/154] event/octeontx2: add devargs to control timer
+ adapters
+
+Add devargs to control each event timer adapter i.e. TIM rings internal
+parameters uniquely. The following dict format is expected
+[ring-chnk_slots-disable_npa-stats_ena]. 0 represents default values.
+
+Example:
+	--dev "0002:0e:00.0,tim_ring_ctl=[2-1023-1-0]"
+
+Signed-off-by: Pavan Nikhilesh <pbhagavatula@marvell.com>
+---
+ doc/guides/eventdevs/octeontx2.rst       | 10 ++++
+ drivers/event/octeontx2/otx2_tim_evdev.c | 87 +++++++++++++++++++++++++++++++-
+ drivers/event/octeontx2/otx2_tim_evdev.h | 10 ++++
+ 3 files changed, 106 insertions(+), 1 deletion(-)
+
+diff --git a/doc/guides/eventdevs/octeontx2.rst b/doc/guides/eventdevs/octeontx2.rst
+index baa866a1e128..e5624ba23aab 100644
+--- a/doc/guides/eventdevs/octeontx2.rst
++++ b/doc/guides/eventdevs/octeontx2.rst
+@@ -132,6 +132,16 @@ Runtime Config Options
+ 
+     --dev "0002:0e:00.0,tim_rings_lmt=5"
+ 
++- ``TIM ring control internal parameters``
++
++  When using multiple TIM rings the ``tim_ring_ctl`` devargs can be used to
++  control each TIM rings internal parameters uniquely. The following dict
++  format is expected [ring-chnk_slots-disable_npa-stats_ena]. 0 represents
++  default values.
++  For Example::
++
++    --dev "0002:0e:00.0,tim_ring_ctl=[2-1023-1-0]"
++
+ Debugging Options
+ ~~~~~~~~~~~~~~~~~
+ 
+diff --git a/drivers/event/octeontx2/otx2_tim_evdev.c b/drivers/event/octeontx2/otx2_tim_evdev.c
+index c18079bfdae6..ecc7563ce693 100644
+--- a/drivers/event/octeontx2/otx2_tim_evdev.c
++++ b/drivers/event/octeontx2/otx2_tim_evdev.c
+@@ -255,7 +255,7 @@ otx2_tim_ring_create(struct rte_event_timer_adapter *adptr)
+ 	struct tim_lf_alloc_req *req;
+ 	struct tim_lf_alloc_rsp *rsp;
+ 	uint64_t nb_timers;
+-	int rc;
++	int i, rc;
+ 
+ 	if (dev == NULL)
+ 		return -ENODEV;
+@@ -304,6 +304,18 @@ otx2_tim_ring_create(struct rte_event_timer_adapter *adptr)
+ 	tim_ring->disable_npa = dev->disable_npa;
+ 	tim_ring->enable_stats = dev->enable_stats;
+ 
++	for (i = 0; i < dev->ring_ctl_cnt ; i++) {
++		struct otx2_tim_ctl *ring_ctl = &dev->ring_ctl_data[i];
++
++		if (ring_ctl->ring == tim_ring->ring_id) {
++			tim_ring->chunk_sz = ring_ctl->chunk_slots ?
++				((uint32_t)(ring_ctl->chunk_slots + 1) *
++				 OTX2_TIM_CHUNK_ALIGNMENT) : tim_ring->chunk_sz;
++			tim_ring->enable_stats = ring_ctl->enable_stats;
++			tim_ring->disable_npa = ring_ctl->disable_npa;
++		}
++	}
++
+ 	tim_ring->nb_chunks = nb_timers / OTX2_TIM_NB_CHUNK_SLOTS(
+ 							tim_ring->chunk_sz);
+ 	tim_ring->nb_chunk_slots = OTX2_TIM_NB_CHUNK_SLOTS(tim_ring->chunk_sz);
+@@ -529,6 +541,77 @@ otx2_tim_caps_get(const struct rte_eventdev *evdev, uint64_t flags,
+ #define OTX2_TIM_CHNK_SLOTS	"tim_chnk_slots"
+ #define OTX2_TIM_STATS_ENA	"tim_stats_ena"
+ #define OTX2_TIM_RINGS_LMT	"tim_rings_lmt"
++#define OTX2_TIM_RING_CTL	"tim_ring_ctl"
++
++static void
++tim_parse_ring_param(char *value, void *opaque)
++{
++	struct otx2_tim_evdev *dev = opaque;
++	struct otx2_tim_ctl ring_ctl = {0};
++	char *tok = strtok(value, "-");
++	uint16_t *val;
++
++	val = (uint16_t *)&ring_ctl;
++
++	if (!strlen(value))
++		return;
++
++	while (tok != NULL) {
++		*val = atoi(tok);
++		tok = strtok(NULL, "-");
++		val++;
++	}
++
++	if (val != (&ring_ctl.enable_stats + 1)) {
++		otx2_err(
++		"Invalid ring param expected [ring-chunk_sz-disable_npa-enable_stats]");
++		return;
++	}
++
++	dev->ring_ctl_cnt++;
++	dev->ring_ctl_data = rte_realloc(dev->ring_ctl_data,
++			sizeof(struct otx2_tim_ctl), 0);
++	dev->ring_ctl_data[dev->ring_ctl_cnt - 1] = ring_ctl;
++}
++
++static void
++tim_parse_ring_ctl_list(const char *value, void *opaque)
++{
++	char *s = strdup(value);
++	char *start = NULL;
++	char *end = NULL;
++	char *f = s;
++
++	while (*s) {
++		if (*s == '[')
++			start = s;
++		else if (*s == ']')
++			end = s;
++
++		if (start < end && *start) {
++			*end = 0;
++			tim_parse_ring_param(start + 1, opaque);
++			start = end;
++			s = end;
++		}
++		s++;
++	}
++
++	free(f);
++}
++
++static int
++tim_parse_kvargs_dict(const char *key, const char *value, void *opaque)
++{
++	RTE_SET_USED(key);
++
++	/* Dict format [ring-chunk_sz-disable_npa-enable_stats] use '-' as ','
++	 * isn't allowed. 0 represents default.
++	 */
++	tim_parse_ring_ctl_list(value, opaque);
++
++	return 0;
++}
+ 
+ static void
+ tim_parse_devargs(struct rte_devargs *devargs, struct otx2_tim_evdev *dev)
+@@ -550,6 +633,8 @@ tim_parse_devargs(struct rte_devargs *devargs, struct otx2_tim_evdev *dev)
+ 			   &dev->enable_stats);
+ 	rte_kvargs_process(kvlist, OTX2_TIM_RINGS_LMT, &parse_kvargs_value,
+ 			   &dev->min_ring_cnt);
++	rte_kvargs_process(kvlist, OTX2_TIM_RING_CTL,
++			   &tim_parse_kvargs_dict, &dev);
+ }
+ 
+ void
+diff --git a/drivers/event/octeontx2/otx2_tim_evdev.h b/drivers/event/octeontx2/otx2_tim_evdev.h
+index 5af724ef9d17..eec0189c1c68 100644
+--- a/drivers/event/octeontx2/otx2_tim_evdev.h
++++ b/drivers/event/octeontx2/otx2_tim_evdev.h
+@@ -111,6 +111,13 @@ struct otx2_tim_ent {
+ 	uint64_t wqe;
+ } __rte_packed;
+ 
++struct otx2_tim_ctl {
++	uint16_t ring;
++	uint16_t chunk_slots;
++	uint16_t disable_npa;
++	uint16_t enable_stats;
++};
++
+ struct otx2_tim_evdev {
+ 	struct rte_pci_device *pci_dev;
+ 	struct rte_eventdev *event_dev;
+@@ -123,6 +130,9 @@ struct otx2_tim_evdev {
+ 	uint16_t chunk_slots;
+ 	uint16_t min_ring_cnt;
+ 	uint8_t enable_stats;
++	uint16_t ring_ctl_cnt;
++	struct otx2_tim_ctl *ring_ctl_data;
++	/* HW const */
+ 	/* MSIX offsets */
+ 	uint16_t tim_msixoff[OTX2_MAX_TIM_RINGS];
+ };
+-- 
+2.14.4
+
