@@ -161,19 +161,32 @@ examples:
 ============
 Please refer to the Yocto manual for the detailed info about WIC. After building
 the project, the WIC image is at:
-   tmp-glibc/deploy/images/marvell-cn91xx/wrlinux-image-glibc-std-marvell-cn91xx.wic
+   tmp-glibc/deploy/images/marvell-cn91xx/wrlinux-image-glibc-std-<machine name>.wic
 
 Then user can burn this image to a SD card.
 
 6.1 Burn the image to SD card
 -----------------------------
-    # dd if=wrlinux-image-glibc-std-marvell-cn91xx.wic of=/dev/your_sd_dev bs=1M conv=fsync
+    # dd if=wrlinux-image-glibc-std-<machine name>.wic of=/dev/your_sd_dev bs=1M conv=fsync
 
-6.2 Set uboot env
------------------
+6.2 Set uboot env for cn91xx
+----------------------------
     # setenv kernel_addr_r 0x7000000
     # setenv fdt_addr_r 0x6f00000
     # fatload mmc 1 $kernel_addr_r Image
     # fatload mmc 1 $fdt_addr_r cn9130-db-A.dtb
     # setenv bootargs console=ttyS0,115200 root=/dev/mmcblk1p2 pci=pcie_bus_safe cpuidle.off=1 rootwait
     # booti $kernel_addr_r - $fdt_addr_r
+
+6.3 Set uboot env for cn96xx
+----------------------------
+    # setenv loadaddr 0x040080000
+    # fatload mmc 0:2 $loadaddr Image
+    # setenv bootargs console=ttyAMA0,115200 root=/dev/mmcblk0p3 maxcpus=24 rootwait coherent_pool=16M net.ifnames=0
+    # booti $loadaddr - $fdtaddr
+
+    If you want to boot from the SD card, you also need to burn the boot
+    firmware to the SD card with command like this after burning the WIC image:
+        sudo dd if=octeontx-bootfs-uboot-t96.img of=/dev/your_sd_dev bs=512 seek=128 skip=128 conv=fsync
+
+    Please ask the Marvell for the cn96xx boot firmware image.
