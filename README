@@ -98,10 +98,11 @@ settings.  Since these macros exist as env variables themselves, they
 may or may not be present depending on who installed and configured
 u-boot for the board.
 
-The console device for the board is ttyS0 at 115200 baud. For the DTB
-address, 0x6f00000 was used with success by Wind River. The load address
-must be high enough to not interfere with kernel decompression. A value
-of 0x7000000 was used with success for all kernels tested by Wind River.
+The console device for the board is ttyS0(cn91xx) and ttyAMA0(cn96xx) at
+115200 baud. For the DTB address, 0x6f00000(cn91xx) was used with success
+by Wind River. The load address must be high enough to not interfere with
+kernel decompression.  A value of 0x7000000 was used with success for all
+kernels tested by Wind River.
 
 4.1 NFS Root File System
 ------------------------
