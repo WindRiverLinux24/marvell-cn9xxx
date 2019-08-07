@@ -139,8 +139,8 @@ baudrate=115200
 Please refer to the "Build Configuration" section in the feature/dpdk/README
 for more details about how to enable it.
 
-5.2 Running the DPDK Examples
------------------------------
+5.2.1 Running the DPDK Examples on CN91XX
+-----------------------------------------
 The following uses the testpmd as an example to demonstrate how to run the DPDK
 examples:
   1. Setup hugepages:
@@ -157,6 +157,56 @@ examples:
 
   4. Run the Application:
      # testpmd --vdev=net_mvpp2,iface=eth0,iface=eth2
+
+5.2.2 Running the DPDK examples on CN96XX (non-sso)
+---------------------------------------------------
+The following uses the testpmd as an example to demonstrate how to run the DPDK
+examples:
+  1. Setup hugepages:
+     # echo 24 >/proc/sys/vm/nr_hugepages
+
+  2. Bind the interfaces:
+     # dpdk-devbind -u 0002:03:00.0 0002:05:00.0
+     # dpdk-devbind -b vfio-pci 0002:03:00.0 0002:05:00.0
+
+  3. Run the Application:
+     # testpmd
+
+5.2.3 Running the DPDK examples on CN96XX (sso)
+-----------------------------------------------
+The following uses the dpdk-test-eventdev as an example to demonstrate how to
+run the DPDK examples:
+  1. Setup hugepages:
+     # echo 24 >/proc/sys/vm/nr_hugepages
+
+  2. Bind the interfaces:
+     # dpdk-devbind -u 0002:0e:00.0 0002:05:00.0
+     # dpdk-devbind -b vfio-pci 0002:0e:00.0 0002:05:00.0
+
+  3. Create SSO VFs and bind to vfio-pci:
+     # echo "177d a0f9" >/sys/bus/pci/drivers/vfio-pci/new_id
+
+  4. Clear limits of all devices created with “a0f9” device id as below:
+     # echo 0 > /sys/bus/pci/devices/0002:0a:00.0/limits/sso
+     # echo 0 > /sys/bus/pci/devices/0002:0a:00.0/limits/ssow
+     # echo 0 > /sys/bus/pci/devices/0002:0b:00.0/limits/sso
+     # echo 0 > /sys/bus/pci/devices/0002:0b:00.0/limits/ssow
+     # echo 0 > /sys/bus/pci/devices/0002:0c:00.0/limits/sso
+     # echo 0 > /sys/bus/pci/devices/0002:0c:00.0/limits/ssow
+     # echo 0 > /sys/bus/pci/devices/0002:0d:00.0/limits/sso
+     # echo 0 > /sys/bus/pci/devices/0002:0d:00.0/limits/ssow
+     # echo 0 > /sys/bus/pci/devices/0002:0e:00.0/limits/sso
+     # echo 0 > /sys/bus/pci/devices/0002:0e:00.0/limits/ssow
+
+  5. Set limits as below:
+     # echo 0 > /sys/bus/pci/devices/0002:0e:00.0/limits/tim
+     # echo 1 > /sys/bus/pci/devices/0002:0e:00.0/limits/npa
+     # echo 16 > /sys/bus/pci/devices/0002:0e:00.0/limits/sso
+     # echo 26 > /sys/bus/pci/devices/0002:0e:00.0/limits/ssow
+
+  6. Run the Application:
+     # dpdk-test-eventdev -l 22-23 -w 0002:0e:0.0 -w 0002:05:0.0 -- --prod_type_ethdev --nb_pkts=0 --verbose 2 --test=pipeline_atq --stlist=A --w
+lcores=23
 
 6. WIC Image
 ============
