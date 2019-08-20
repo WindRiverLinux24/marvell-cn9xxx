@@ -126,65 +126,8 @@ rootpath=/tftpboot/rootfs
 consoledev=ttyAMA0
 baudrate=115200
 
-5. DPDK
-=======
 
-5.1 Build Configuration
------------------------
-Please refer to the "Build Configuration" section in the feature/dpdk/README
-for more details about how to enable it.
-
-5.2.1 Running the DPDK examples on CN96XX (non-sso)
----------------------------------------------------
-The following uses the testpmd as an example to demonstrate how to run the DPDK
-examples:
-  1. Setup hugepages:
-     # echo 24 >/proc/sys/vm/nr_hugepages
-
-  2. Bind the interfaces:
-     # dpdk-devbind -u 0002:03:00.0 0002:05:00.0
-     # dpdk-devbind -b vfio-pci 0002:03:00.0 0002:05:00.0
-
-  3. Run the Application:
-     # testpmd
-
-5.2.2 Running the DPDK examples on CN96XX (sso)
------------------------------------------------
-The following uses the dpdk-test-eventdev as an example to demonstrate how to
-run the DPDK examples:
-  1. Setup hugepages:
-     # echo 24 >/proc/sys/vm/nr_hugepages
-
-  2. Bind the interfaces:
-     # dpdk-devbind -u 0002:0e:00.0 0002:05:00.0
-     # dpdk-devbind -b vfio-pci 0002:0e:00.0 0002:05:00.0
-
-  3. Create SSO VFs and bind to vfio-pci:
-     # echo "177d a0f9" >/sys/bus/pci/drivers/vfio-pci/new_id
-
-  4. Clear limits of all devices created with “a0f9” device id as below:
-     # echo 0 > /sys/bus/pci/devices/0002:0a:00.0/limits/sso
-     # echo 0 > /sys/bus/pci/devices/0002:0a:00.0/limits/ssow
-     # echo 0 > /sys/bus/pci/devices/0002:0b:00.0/limits/sso
-     # echo 0 > /sys/bus/pci/devices/0002:0b:00.0/limits/ssow
-     # echo 0 > /sys/bus/pci/devices/0002:0c:00.0/limits/sso
-     # echo 0 > /sys/bus/pci/devices/0002:0c:00.0/limits/ssow
-     # echo 0 > /sys/bus/pci/devices/0002:0d:00.0/limits/sso
-     # echo 0 > /sys/bus/pci/devices/0002:0d:00.0/limits/ssow
-     # echo 0 > /sys/bus/pci/devices/0002:0e:00.0/limits/sso
-     # echo 0 > /sys/bus/pci/devices/0002:0e:00.0/limits/ssow
-
-  5. Set limits as below:
-     # echo 0 > /sys/bus/pci/devices/0002:0e:00.0/limits/tim
-     # echo 1 > /sys/bus/pci/devices/0002:0e:00.0/limits/npa
-     # echo 16 > /sys/bus/pci/devices/0002:0e:00.0/limits/sso
-     # echo 26 > /sys/bus/pci/devices/0002:0e:00.0/limits/ssow
-
-  6. Run the Application:
-     # dpdk-test-eventdev -l 22-23 -w 0002:0e:0.0 -w 0002:05:0.0 -- --prod_type_ethdev --nb_pkts=0 --verbose 2 --test=pipeline_atq --stlist=A --w
-lcores=23
-
-6. WIC Image
+5. WIC Image
 ============
 Please refer to the Yocto manual for the detailed info about WIC. After building
 the project, the WIC image is at:
@@ -192,11 +135,11 @@ the project, the WIC image is at:
 
 Then user can burn this image to a SD card.
 
-6.1 Burn the image to SD card
+5.1 Burn the image to SD card
 -----------------------------
     # dd if=wrlinux-image-glibc-std-<machine name>.wic of=/dev/your_sd_dev bs=1M conv=fsync
 
-6.2 Set uboot env for cn96xx
+5.2 Set uboot env for cn96xx
 ----------------------------
     # setenv loadaddr 0x040080000
     # fatload mmc 0:2 $loadaddr Image
