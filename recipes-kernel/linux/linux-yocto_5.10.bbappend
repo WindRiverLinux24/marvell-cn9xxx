@@ -1,4 +1,4 @@
-KBRANCH_marvell-cn96xx  = "v5.10/standard/cn-sdkv4.18/cn96xx"
+KBRANCH_marvell-cn96xx  = "v5.10/standard/cn-sdkv5.4/octeon"
 
 require linux-yocto-marvell-cn96xx.inc
 
