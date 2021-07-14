@@ -3,5 +3,6 @@ EXTRA_KERNEL_SRC_URI_append_marvell-cn96xx += " \
     file://0001-mmc-cavium-thunderx-Drop-the-IRQF_NO_THREAD-constrai.patch \
     file://0002-pci-octeontx2-Workaround-for-PEM-config-space-writes.patch \
     file://0001-octeontx2-af-Fix-deadlock-between-tx_stall-txsch_loc.patch \
+    file://0001-pci-octeontx2-Use-a-more-lightweight-API-to-get-the-.patch \
 "
 FILESEXTRAPATHS_prepend_osv-wrlinux := "${EXTRA_KERNEL_FILES}:"
