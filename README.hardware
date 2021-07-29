@@ -80,7 +80,17 @@ The following features are not supported or validated.
 
 	x eMMC card: 1x eMMC 4 GB device
 
-3.1.3 Validated Board Info
+3.1.3 Known Issues
+~~~~~~~~~~~~~~~~~~
+
+1) systemd info: rngd[1008]: [rndr ]: No HW SUPPORT
+   RNDR is supported in armv8.5, but not in this SOC.
+
+   Reference:
+    [1] https://github.com/nhorman/rng-tools/pull/128
+    [2] https://github.com/nhorman/rng-tools/commit/e6e01105770e72d76ad679295590c60e994b812a
+
+3.1.4 Validated Board Info
 ~~~~~~~~~~~~~~~~~~~~~~~~~~
 
 This BSP is only validated in following environment. If you use this BSP
