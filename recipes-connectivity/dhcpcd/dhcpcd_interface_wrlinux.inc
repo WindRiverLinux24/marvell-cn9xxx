@@ -5,5 +5,5 @@ update_dhcpcd_interface() {
 }
 
 UPDATE_DHCPCD_INTERFACE_FUNC ?= ""
-UPDATE_DHCPCD_INTERFACE_FUNC_marvell-cn96xx = "update_dhcpcd_interface"
+UPDATE_DHCPCD_INTERFACE_FUNC:marvell-cn96xx = "update_dhcpcd_interface"
 do_install[postfuncs] += "${UPDATE_DHCPCD_INTERFACE_FUNC}"
