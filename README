@@ -150,3 +150,53 @@ Then user can burn this image to a SD card.
         sudo dd if=octeontx-bootfs-uboot-t96.img of=/dev/your_sd_dev bs=512 seek=128 skip=128 conv=fsync
 
     Please ask the Marvell for the cn96xx boot firmware image.
+
+6. Coresight Support
+====================
+The non invasive debug is disabled by default on the cn96xx board, so we have to
+override the default reset value by updating the DAP_IMP_DAR register. Run the
+following command in the u-boot before booting the linux kernel.
+    CN96XX-CRB> mw 87e002000100 0x23f
+
+The following steps can be used to validate the coresight on cn96xx:
+    ~# cat /sys/bus/coresight/devices/etm0/ns_exlevel_vinst
+    0x0
+    ~# echo 1 >/sys/bus/coresight/devices/tmc_etr0/enable_sink
+    ~# echo 1 >/sys/bus/coresight/devices/etm0/enable_source
+    ~# taskset -c 0 ls /bin/
+    '['                                            lsattr
+    '[['                                                   lsblk
+     aarch64-marvell-linux-gnu-ar                          lscpu
+     aarch64-marvell-linux-gnu-as                          lsipc
+     aarch64-marvell-linux-gnu-c++                         lslocks
+     aarch64-marvell-linux-gnu-g++                         lsns
+     aarch64-marvell-linux-gnu-gcc                         lsof
+    ...
+
+    ~# mkdir otx2
+    ~# dd if=/dev/tmc_etr0 of=/root/otx2/cstrace.bin
+    5455+2 records in
+    5456+0 records out
+    2793472 bytes (2.8 MB, 2.7 MiB) copied, 1.25005 s, 2.2 MB/s
+    [  501.297766] Writes:  Total: 89823307  Max/Min: 2278047/1702147   Fail: 0
+    ~# echo 0 >/sys/bus/coresight/devices/tmc_etr0/enable_sink
+    ~# echo 0 >/sys/bus/coresight/devices/etm0/enable_source
+    ~# c_api_pkt_print_test -ss_path /root/
+    Decoding otx2 snapshot ...
+    opening /root//otx2/cstrace.bin trace data file
+    C-API packet print test
+    Library Version 0.12.2
+
+    c_api_pkt_print_test -ss_path /root/
+
+    Idx:0; I_NOT_SYNC : I Stream not synchronised
+    Idx:262840; I_ASYNC : Alignment Synchronisation.
+    Idx:262852; I_TRACE_INFO : Trace Info.; INFO=0x0 { CC.0 }
+    Idx:262855; I_TRACE_ON : Trace On.
+    Idx:262856; I_CTXT : Context Packet.; Ctxt: AArch64,EL2, NS;
+    Idx:262858; I_TRACE_ON : Trace On.
+    Idx:262859; I_CTXT : Context Packet.; Ctxt: AArch64,EL2, NS;
+    Idx:262861; I_ADDR_L_64IS0 : Address, Long, 64 bit, IS0.; Addr=0xFFFF800010872CD0;
+    Idx:262870; I_ATOM_F1 : Atom format 1.; E
+    Idx:262871; I_ADDR_L_32IS0 : Address, Long, 32 bit, IS0.; Addr=0xFFFF800010CD57E0;
+    ...
