@@ -3,7 +3,13 @@ HOMEPAGE = "https://github.com/Linaro/OpenCSD"
 LICENSE = "BSD-3-Clause"
 LIC_FILES_CHKSUM = "file://LICENSE;md5=ad8cb685eb324d2fa2530b985a43f3e5"
 
-SRC_URI = "git://github.com/Linaro/OpenCSD;protocol=https;branch=master"
+SRC_URI = "git://github.com/Linaro/OpenCSD;protocol=https;branch=master \
+           file://0001-otx2_snapshot-Add-otx2-snapshot-support.patch \
+           file://0003-packages-opencsd-Update-error-message-in-script.patch \
+           file://0002-packages-opencsd-Fix-trace-decode-for-spaces-in-disa.patch \
+           file://0004-packages-opencsd-add-a-script-for-sysfs.patch \
+"
+
 SRCREV = "54c3f67811fbcea853b7d223383d4a755819bb7e"
 
 S = "${WORKDIR}/git"
@@ -31,6 +37,13 @@ do_compile() {
 
 do_install() {
     oe_runmake -C ${S}/decoder/build/linux install install_man
+    install -d ${D}/usr/share/opencsd
+    install -m 755 ${S}/decoder/tests/bin/builddir/c_api_pkt_print_test ${D}/usr/bin/
+    install -m 755 ${S}/coresight-trace.py ${D}/usr/share/opencsd/
+    install -m 755 ${S}/coresight-sysfs.sh ${D}/usr/bin/
+    install -m 755 ${S}/README-coresight-sysfs.txt ${D}/usr/share/opencsd/
 }
 
 BBCLASSEXTEND = "native"
+COMPATIBLE_MACHINE = "marvell-cn96xx"
+RDEPENDS:${PN} += "bash"
