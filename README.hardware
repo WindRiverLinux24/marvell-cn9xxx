@@ -21,20 +21,14 @@ This BSP supports the following boards:
 2. Change History
 =================
 
-  - 2021/07 (LINUXPG-767): Wind River Linux 10.21, add CN96xx support based
+  - 2022/09 (LINUXPG-1143): Wind River Linux 10.22, add CN96xx support based
 			   on Marvell SDK11
 
-  - 2020/08 (LINUXPG-504): Wind River Linux 10.20, add CN96xx support based
-			   on Marvell SDK10
+3. BSP Features
+===============
 
-3. BSP Notes
-============
-
-3.1 Marvell CN96XX-CRB
+3.1 Supported Features
 ----------------------
-
-3.1.1 Supported Features
-~~~~~~~~~~~~~~~~~~~~~~~~
 
 The following BSP features are validated and supported.
 
@@ -59,6 +53,7 @@ The following BSP features are validated and supported.
 
 	o Storage
 		+ Micso SD card
+		+ 1x eMMC 16GB device
 		+ 2x 32M SPI Flash (MX25L256*)
 
 	o Power Management
@@ -72,15 +67,11 @@ The following BSP features are validated and supported.
 		+ UART: 8250/16550A compatible serial port
 		+ Watchdog
 
-3.1.2 Unsupported Features
-~~~~~~~~~~~~~~~~~~~~~~~~~~
+4. BSP Notes
+============
 
-The following features are not supported or validated.
-
-	x eMMC card: 1x eMMC 4 GB device
-
-3.1.3 Known Issues
-~~~~~~~~~~~~~~~~~~
+4.1 Known Issues
+----------------
 
 1) systemd info: rngd[1008]: [rndr ]: No HW SUPPORT
    RNDR is supported in armv8.5, but not in this SOC.
@@ -89,14 +80,14 @@ The following features are not supported or validated.
     [1] https://github.com/nhorman/rng-tools/pull/128
     [2] https://github.com/nhorman/rng-tools/commit/e6e01105770e72d76ad679295590c60e994b812a
 
-3.1.4 Validated Board Info
-~~~~~~~~~~~~~~~~~~~~~~~~~~
+4.2 Validated Board Info
+------------------------
 
 This BSP is only validated in following environment. If you use this BSP
 in a different environment it may possibly have some issues.
 
 	Board Model:    	cn96xx-crb
 	Board Revision: 	R2
-	Board Serial:   	CN96xx-CRB-R2P5-B0-0018
+	Board Serial:		CN9600-CRB-BOARD-PR2-CM-R2P5-040
 	BootLoader:		U-Boot
-	BootLoader Version:	2019.10-devel (Jun 17 2021 - 17:03:15 +0800), Build: cs-SDK11.0-SMP2-E05
+	BootLoader Version:	U-Boot 2020.10-6.0.0 (Aug 08 2022 - 11:00:35 +0800), Build: SDK11.22.07
