@@ -205,18 +205,12 @@ The following steps can be used to validate the coresight on cn96xx:
 ====================
 The following steps can be used to validate the EDAC/GHES on cn96xx:
     ~# echo 0x800000 > /sys/devices/system/edac/mc/mc0/address
-    ~# echo 0x300 > /sys/devices/system/edac/mc/mc0/error_type
+    ~# echo 0x40000300 > /sys/devices/system/edac/mc/mc0/error_type
     ~# echo 1 > /sys/devices/system/edac/mc/mc0/inject
 
 An example output is as follows:
-    EDAC octeontx-edac-ghes: octeontx_edac_mc_inject c2000c0b 3 800000 200 0 0 0 0
-    Injected error va:0x800000, pa:0x800000, lm:1D(Acc0)C siDAl o(Deont,Reda0/0,Bs: 0c,eow 0_000c5mC_l 0e0t50,c200=0e)Y =,x800?00,0000)?-> e?u
-    EDAC octeontx-edac-ghes: mcc:[40000001] ffff800018010200, tail=0, head=1, size=17, sign=4d52564c
-    EDAC MC1: 1 CE LMC1: DIMM0,Rank0/0,Bank05 on any memory ( page:0x80 offset:0x0 grain:1 syndrome:0x0 - mcc)
-    [Hardware Error]: It has been corrected by h/w and requires no further action
-    [Hardware Error]: event severity: corrected
-    [Hardware Error]:  Error 0, type: corrected
-    [Hardware Error]:  fru_text: LMC1: DIMM0,Rank0/0,
-    [Hardware Error]:   section_type: memory error
-    [Hardware Error]:   physical_address: 0x0000000000800000
-    [Hardware Error]:   card: 1 module: 0 bank: 5 row: 21 column: 336
+    EDAC octeontx: octeontx_edac_mc_inject_error c2000c0b 3 800000 200 0 0 0 0
+    Injected error va:0x800000, pa:0x800000, lmc1 (mcc0)
+    LMCDA Doct Entx: ocle (Dx_M0aRamk0/0,Bctk0r,Rr: 0c0000c0bol3, 0050,F, X=0, YN=exce)?0x800000? (Secure)
+    EDAC octeontx: mcc:[40000001] tail=0, head=1, size=17
+    EDAC MC0: 1 CE LMC1: DIMM0,Rank0/0,Bank05 on  (card:1 module:0 bank:5 row:21 col:336 page:0x80 offset:0x0 grain:1 syndrome:0x0)
