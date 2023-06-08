@@ -2,8 +2,7 @@
 # long-description: Creates a partitioned SD card image. Boot files
 # are located in the first vfat partition.
 
-# the vfat partition used by BDK
-part --ondisk mmcblk --fstype=vfat --align 1536 --size 2560K
-# Reserve 4M ~ 8M space used by the ATF and u-boot
+# Reserve 8M space used by the boot image (SCP, EBF, ATF and u-boot)
+part --ondisk mmcblk --fstype=vfat --align 1536 --size 8M
 part /boot --source bootimg-partition --ondisk mmcblk --fstype=vfat --label boot --active --align 8192 --size 32M --use-uuid
 part / --source rootfs --ondisk mmcblk --fstype=ext4 --label root --align 4 --use-uuid

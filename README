@@ -138,18 +138,27 @@ Then user can burn this image to a SD card.
 -----------------------------
     # dd if=wrlinux-image-glibc-std-<machine name>.wic of=/dev/your_sd_dev bs=1M conv=fsync
 
-5.2 Set uboot env for cn96xx
+5.2 Boot from the SD card
+-------------------------
+    If you want to boot from the SD card, you also need to burn the boot image
+    to the SD card. There are two methods to support SD card startup:
+
+    1. Before compiling, place the boot image file (octeontx-bootfs-uboot-t96.img)
+       into <bsp_layer>/downloads folder, then run the bitbake command to compile,
+       the WIC image will contain the boot image.
+
+    2. Use the following command to burn the boot image after burning the WIC image:
+	dd if=octeontx-bootfs-uboot-t96.img of=/dev/your_sd_dev bs=512 seek=128 skip=128 conv=fsync
+
+    Note: Please contact the Marvell for the cn96xx boot image.
+
+5.3 Set uboot env for cn96xx
 ----------------------------
     # setenv loadaddr 0x040080000
     # fatload mmc 0:2 $loadaddr Image
     # setenv bootargs console=ttyAMA0,115200 root=/dev/mmcblk0p3 maxcpus=24 rootwait coherent_pool=16M net.ifnames=0
     # booti $loadaddr - $fdtaddr
 
-    If you want to boot from the SD card, you also need to burn the boot
-    firmware to the SD card with command like this after burning the WIC image:
-        sudo dd if=octeontx-bootfs-uboot-t96.img of=/dev/your_sd_dev bs=512 seek=128 skip=128 conv=fsync
-
-    Please ask the Marvell for the cn96xx boot firmware image.
 
 6. Coresight Support
 ====================
