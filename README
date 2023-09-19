@@ -144,8 +144,16 @@ Then user can burn this image to a SD card.
     to the SD card. There are two methods to support SD card startup:
 
     1. Before compiling, place the boot image file (octeontx-bootfs-uboot-t96.img)
-       into <bsp_layer>/downloads folder, then run the bitbake command to compile,
-       the WIC image will contain the boot image.
+       into one folder, then add one line below to local.conf:
+
+	    BOOT_IMAGE_DIR = "<folder-containing-boot-image>"
+
+       after running the bitbake command, the WIC image will contain the boot image.
+
+    Note: The default boot image name is 'octeontx-bootfs-uboot-t96.img', if use
+	  a different file name, add following line to local.conf:
+
+	    BOOT_IMAGE = "<your-boot-image-name>"
 
     2. Use the following command to burn the boot image after burning the WIC image:
 	dd if=octeontx-bootfs-uboot-t96.img of=/dev/your_sd_dev bs=512 seek=128 skip=128 conv=fsync
