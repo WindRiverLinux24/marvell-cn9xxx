@@ -1,10 +1,11 @@
 do_image_wic[postfuncs] += "marvell_cn96xx_wic"
 
-BOOT_IMAGE = "octeontx-bootfs-uboot-t96.img"
+BOOT_IMAGE_DIR ?= ""
+BOOT_IMAGE ?= "octeontx-bootfs-uboot-t96.img"
 
 marvell_cn96xx_wic() {
-    if [ -f ${LAYER_PATH_wr-marvell-cn9xxx}/downloads/${BOOT_IMAGE} ]; then
-	cp ${LAYER_PATH_wr-marvell-cn9xxx}/downloads/${BOOT_IMAGE} ${DEPLOY_DIR_IMAGE}/
+    if [ -f ${BOOT_IMAGE_DIR}/${BOOT_IMAGE} ]; then
+	cp ${BOOT_IMAGE_DIR}/${BOOT_IMAGE} ${DEPLOY_DIR_IMAGE}/
     else
 	touch ${DEPLOY_DIR_IMAGE}/${BOOT_IMAGE}
     fi
