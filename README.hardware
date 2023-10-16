@@ -90,4 +90,4 @@ in a different environment it may possibly have some issues.
 	Board Revision: 	R2
 	Board Serial:		CN9600-CRB-BOARD-PR2-CM-R2P5-040
 	BootLoader:		U-Boot
-	BootLoader Version:	U-Boot 2020.10-6.0.0 (Nov 09 2022 - 16:36:13 +0800), Build: SDK11.22.10
+	BootLoader Version:	U-Boot 2023.01-6.0.0 (Sep 06 2023 - 10:47:08 +0800), Build: SDK12.23.08
