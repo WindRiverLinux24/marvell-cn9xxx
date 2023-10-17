@@ -163,8 +163,8 @@ Then user can burn this image to a SD card.
 5.3 Set uboot env for cn96xx
 ----------------------------
     # setenv loadaddr 0x040080000
-    # fatload mmc 0:2 $loadaddr Image
-    # setenv bootargs console=ttyAMA0,115200 root=/dev/mmcblk0p3 maxcpus=24 rootwait coherent_pool=16M net.ifnames=0
+    # fatload mmc 1:2 $loadaddr Image
+    # setenv bootargs console=ttyAMA0,115200 root=/dev/mmcblk1p3 maxcpus=24 rootwait coherent_pool=16M net.ifnames=0
     # booti $loadaddr - $fdtaddr
 
 
