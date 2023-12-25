@@ -91,3 +91,11 @@ in a different environment it may possibly have some issues.
 	Board Serial:		CN9600-CRB-BOARD-PR2-CM-R2P5-040
 	BootLoader:		U-Boot
 	BootLoader Version:	U-Boot 2023.01-6.0.0 (Sep 06 2023 - 10:47:08 +0800), Build: SDK12.23.08
+
+4.3 Cypress flash
+-----------------
+
+Based on some customer requests, we porting some patches for the Cypress
+s25fl064l flash to WRLinux. However, as we don't have the corresponding
+hardware to validate the s25fl064l flash, we don't officially support this
+flash.
