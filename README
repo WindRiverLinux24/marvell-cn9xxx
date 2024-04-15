@@ -231,3 +231,18 @@ An example output is as follows:
     LMCDA Doct Entx: ocle (Dx_M0aRamk0/0,Bctk0r,Rr: 0c0000c0bol3, 0050,F, X=0, YN=exce)?0x800000? (Secure)
     EDAC octeontx: mcc:[40000001] tail=0, head=1, size=17
     EDAC MC0: 1 CE LMC1: DIMM0,Rank0/0,Bank05 on  (card:1 module:0 bank:5 row:21 col:336 page:0x80 offset:0x0 grain:1 syndrome:0x0)
+
+8. Build kernel based on SDK12 v6.1
+===================================
+
+Method 1:
+
+    Add "--templates marvell-base61" to the setup.sh parameters.
+    e.g.
+        setup.sh --machines marvell-cn96xx --templates marvell-base61
+
+Method 2:
+
+    If you do not use wrtemplate, you can also enable sdk12 by adding
+    the following statement in local.conf.
+	ENABLE_MARVELL_BASE61 = "1"
