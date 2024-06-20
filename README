@@ -231,18 +231,3 @@ An example output is as follows:
     LMCDA Doct Entx: ocle (Dx_M0aRamk0/0,Bctk0r,Rr: 0c0000c0bol3, 0050,F, X=0, YN=exce)?0x800000? (Secure)
     EDAC octeontx: mcc:[40000001] tail=0, head=1, size=17
     EDAC MC0: 1 CE LMC1: DIMM0,Rank0/0,Bank05 on  (card:1 module:0 bank:5 row:21 col:336 page:0x80 offset:0x0 grain:1 syndrome:0x0)
-
-8. Build kernel based on SDK12 v5.15
-====================================
-
-Method 1:
-
-    Add "--templates marvell-base515" to the setup.sh parameters.
-    e.g.
-        setup.sh --machines marvell-cn96xx --templates marvell-base515
-
-Method 2:
-
-    If you opt not to use wrtemplate, you can also activate the kernel based
-    on sdk12 old v5.15 by including the following statement in local.conf.
-	ENABLE_MARVELL_BASE515 = "1"

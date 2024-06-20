@@ -6,5 +6,3 @@ SRCREV_machine:marvell-cn96xx ?= "${AUTOREV}"
 SRCREV_meta:marvell-cn96xx ?= "${AUTOREV}"
 
 KMACHINE:marvell-cn96xx ?= "marvell-cn96xx"
-
-ENABLE_MARVELL_BASE515 ?= "0"
