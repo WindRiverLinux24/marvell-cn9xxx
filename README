@@ -228,12 +228,9 @@ The following steps can be used to validate the EDAC/GHES on cn96xx:
     ~# echo 0x40000300 > /sys/devices/system/edac/mc/mc0/error_type
     ~# echo 1 > /sys/devices/system/edac/mc/mc0/inject
 
-An example output is as follows:
-    EDAC octeontx: octeontx_edac_mc_inject_error c2000c0b 3 800000 200 0 0 0 0
-    Injected error va:0x800000, pa:0x800000, lmc1 (mcc0)
-    LMCDA Doct Entx: ocle (Dx_M0aRamk0/0,Bctk0r,Rr: 0c0000c0bol3, 0050,F, X=0, YN=exce)?0x800000? (Secure)
-    EDAC octeontx: mcc:[40000001] tail=0, head=1, size=17
-    EDAC MC0: 1 CE LMC1: DIMM0,Rank0/0,Bank05 on  (card:1 module:0 bank:5 row:21 col:336 page:0x80 offset:0x0 grain:1 syndrome:0x0)
+Below is an output example:
+    EDAC octeontx: Inject: CPU11: (0xc2000c0b, 0x3, 0x800000, 0x200, 0x0) 0x0
+    EDAC MC0: 1 CE LMC1: DIMM0,R0/0 on any memory ( page:0x80 offset:0x0 grain:1 syndrome:0xce - card:1 module:0 bank:5 row:21 column:336 single-bit ECC )
 
 8. Build kernel based on SDK12 v6.1
 ===================================
